@@ -1,0 +1,28 @@
+:root {
+  --slate-950: #0b1020;
+  --slate-900: #11182a;
+  --slate-800: #1c2840;
+  --slate-700: #30415f;
+  --slate-300: #b9c4d8;
+  --slate-100: #edf2fa;
+  --slate-50: #f8fafc;
+  --slate-900-text: #0f172a;
+  --slate-600-text: #475569;
+  --white: #ffffff;
+  --blue-500: #4c8dff;
+  --blue-600: #2f6fed;
+  --green-500: #28b487;
+  --amber-500: #e9a23b;
+  --red-500: #e05263;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+}

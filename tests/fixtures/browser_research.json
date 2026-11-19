@@ -1,0 +1,32 @@
+{
+  "protocol_version": 1,
+  "scope": {
+    "scope_id": "scope-chrome-research",
+    "target_kind": "browser_tab",
+    "app_name": "Chrome",
+    "window_title": "Research Tab",
+    "process_id": 4242
+  },
+  "active_window_proof": "hwnd:4242",
+  "semantic_elements": [
+    {
+      "locator": "search-input",
+      "role": "textbox",
+      "label": "Search query",
+      "bounds": { "x": 120, "y": 80, "width": 400, "height": 36 },
+      "is_secret": false,
+      "is_enabled": true
+    },
+    {
+      "locator": "submit-btn",
+      "role": "button",
+      "label": "Search",
+      "bounds": { "x": 530, "y": 80, "width": 80, "height": 36 },
+      "is_secret": false,
+      "is_enabled": true
+    }
+  ],
+  "visual_context_summary": "Browser tab showing search bar",
+  "observation_hash": "obs-chrome-research-001",
+  "observed_at": "2026-11-19T18:00:00Z"
+}

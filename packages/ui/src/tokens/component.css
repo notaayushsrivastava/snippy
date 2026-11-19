@@ -1,0 +1,8 @@
+:root {
+  --button-primary-bg: var(--action-primary);
+  --button-danger-bg: var(--status-danger);
+  --card-bg: var(--surface-panel);
+  --card-border: var(--border-subtle);
+  --overlay-outline: var(--action-primary);
+  --approval-card-bg: var(--surface-raised);
+}
