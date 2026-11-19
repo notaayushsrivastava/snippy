@@ -12,12 +12,25 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Snippy",
         "width": 520,
         "height": 760,
         "minWidth": 420,
         "minHeight": 560,
         "resizable": true
+      },
+      {
+        "label": "overlay",
+        "title": "Snippy Overlay",
+        "url": "index.html#overlay",
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "width": 320,
+        "height": 100
       }
     ],
     "security": {

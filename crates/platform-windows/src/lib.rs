@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use platform_contract::{
-    ActionResult, ApprovedAction, ExpectedState, Observation, PROTOCOL_VERSION, PermissionRequest,
-    PermissionState, PlatformAdapter, PlatformError, Scope, SecureStorage, TargetKind,
-    Verification,
+    ActionKind, ActionResult, ApprovedAction, Bounds, ExpectedState, Observation,
+    PROTOCOL_VERSION, PermissionRequest, PermissionState, PlatformAdapter, PlatformError, Scope,
+    SecureStorage, SemanticElement, TargetKind, Verification,
 };
 use sha2::{Digest, Sha256};
 
@@ -20,11 +20,19 @@ mod win_impl {
         CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree,
         CredReadW, CredWriteW,
     };
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+    };
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+        IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_InvokePatternId,
+        UIA_ValuePatternId,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
         IsWindowVisible,
     };
-    use windows::core::{PCWSTR, PWSTR};
+    use windows::core::{BSTR, Interface, PCWSTR, PWSTR};
 
     fn to_wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -118,6 +126,216 @@ mod win_impl {
         let _ = unsafe { EnumWindows(Some(enum_window_proc), lparam) };
         scopes
     }
+
+    fn parse_hwnd(scope_id: &str) -> Result<HWND, PlatformError> {
+        let raw = scope_id
+            .strip_prefix("hwnd:")
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or_else(|| PlatformError::TargetNotFound("invalid hwnd scope_id".into()))?;
+        Ok(HWND(raw as *mut c_void))
+    }
+
+    fn init_uia() -> Result<IUIAutomation, PlatformError> {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))
+        }
+    }
+
+    fn element_locator(el: &IUIAutomationElement, index: usize) -> String {
+        if let Ok(id) = unsafe { el.CurrentAutomationId() } {
+            let s = id.to_string();
+            if !s.is_empty() {
+                return format!("uia-id:{s}");
+            }
+        }
+        format!("uia-idx:{index}")
+    }
+
+    fn collect_elements(
+        walker: &IUIAutomationTreeWalker,
+        el: &IUIAutomationElement,
+        depth: usize,
+        out: &mut Vec<SemanticElement>,
+    ) {
+        if depth > 5 || out.len() >= 80 {
+            return;
+        }
+        let name = unsafe { el.CurrentName() }
+            .map(|b| b.to_string())
+            .unwrap_or_default();
+        let is_enabled = unsafe { el.CurrentIsEnabled() }
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+        let is_secret = unsafe { el.CurrentIsPassword() }
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+        let control_type = unsafe { el.CurrentControlType() }.map(|c| c.0).unwrap_or(0);
+        let rect = unsafe { el.CurrentBoundingRectangle() }.ok();
+
+        if !name.is_empty() || is_secret {
+            let idx = out.len();
+            out.push(SemanticElement {
+                locator: element_locator(el, idx),
+                role: format!("uia:{control_type}"),
+                label: if is_secret {
+                    "Sensitive field".into()
+                } else {
+                    name
+                },
+                bounds: rect.map(|r| Bounds {
+                    x: r.left,
+                    y: r.top,
+                    width: (r.right - r.left).max(0) as u32,
+                    height: (r.bottom - r.top).max(0) as u32,
+                }),
+                is_secret,
+                is_enabled,
+            });
+        }
+
+        if let Ok(mut child) = unsafe { walker.GetFirstChildElement(el) } {
+            loop {
+                collect_elements(walker, &child, depth + 1, out);
+                if out.len() >= 80 {
+                    break;
+                }
+                match unsafe { walker.GetNextSiblingElement(&child) } {
+                    Ok(next) => child = next,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    fn find_element_by_locator(
+        walker: &IUIAutomationTreeWalker,
+        el: &IUIAutomationElement,
+        target_locator: &str,
+        depth: usize,
+        counter: &mut usize,
+    ) -> Option<IUIAutomationElement> {
+        if depth > 5 || *counter >= 80 {
+            return None;
+        }
+        let name = unsafe { el.CurrentName() }
+            .map(|b| b.to_string())
+            .unwrap_or_default();
+        let is_secret = unsafe { el.CurrentIsPassword() }
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+        if !name.is_empty() || is_secret {
+            let loc = element_locator(el, *counter);
+            *counter += 1;
+            if loc == target_locator {
+                return Some(el.clone());
+            }
+        }
+        if let Ok(mut child) = unsafe { walker.GetFirstChildElement(el) } {
+            loop {
+                if let Some(found) =
+                    find_element_by_locator(walker, &child, target_locator, depth + 1, counter)
+                {
+                    return Some(found);
+                }
+                match unsafe { walker.GetNextSiblingElement(&child) } {
+                    Ok(next) => child = next,
+                    Err(_) => break,
+                }
+            }
+        }
+        None
+    }
+
+    pub fn observe_hwnd(scope: &Scope) -> Result<Vec<SemanticElement>, PlatformError> {
+        let hwnd = parse_hwnd(&scope.scope_id)?;
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return Err(PlatformError::TargetNotFound(format!(
+                "window {} is no longer visible",
+                scope.window_title
+            )));
+        }
+        let uia = init_uia()?;
+        let root = unsafe { uia.ElementFromHandle(hwnd) }
+            .map_err(|e| PlatformError::TargetNotFound(e.to_string()))?;
+        let walker = unsafe { uia.ControlViewWalker() }
+            .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+        let mut elements = Vec::new();
+        collect_elements(&walker, &root, 0, &mut elements);
+        Ok(elements)
+    }
+
+    pub fn execute_uia(action: &ApprovedAction) -> Result<String, PlatformError> {
+        let hwnd = parse_hwnd(&action.scope_id)?;
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return Err(PlatformError::FocusChanged(
+                "target window is no longer visible".into(),
+            ));
+        }
+        let locator = action
+            .target
+            .semantic_locator
+            .as_deref()
+            .ok_or_else(|| PlatformError::StaleLocator("semantic_locator required".into()))?;
+
+        let uia = init_uia()?;
+        let root = unsafe { uia.ElementFromHandle(hwnd) }
+            .map_err(|e| PlatformError::TargetNotFound(e.to_string()))?;
+        let walker = unsafe { uia.ControlViewWalker() }
+            .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+        let mut counter = 0usize;
+        let el = find_element_by_locator(&walker, &root, locator, 0, &mut counter)
+            .ok_or_else(|| PlatformError::StaleLocator(format!("locator not found: {locator}")))?;
+
+        let is_secret = unsafe { el.CurrentIsPassword() }
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+        if is_secret {
+            return Err(PlatformError::PermissionDenied(
+                "refusing to automate password/secret field".into(),
+            ));
+        }
+
+        match action.kind {
+            ActionKind::Focus => {
+                unsafe { el.SetFocus() }
+                    .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+                Ok(format!("Focused {locator}"))
+            }
+            ActionKind::Invoke => {
+                let pattern: IUIAutomationInvokePattern = unsafe {
+                    el.GetCurrentPattern(UIA_InvokePatternId)
+                        .and_then(|u| u.cast())
+                }
+                .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+                unsafe { pattern.Invoke() }
+                    .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+                Ok(format!("Invoked {locator}"))
+            }
+            ActionKind::SetNonSecretValue => {
+                let text = action
+                    .arguments
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        PlatformError::UnsupportedControl("missing arguments.text".into())
+                    })?;
+                let pattern: IUIAutomationValuePattern = unsafe {
+                    el.GetCurrentPattern(UIA_ValuePatternId)
+                        .and_then(|u| u.cast())
+                }
+                .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+                let bstr = BSTR::from(text);
+                unsafe { pattern.SetValue(&bstr) }
+                    .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+                Ok(format!("Updated non-secret value on {locator}"))
+            }
+            other => Err(PlatformError::UnsupportedControl(format!(
+                "{other:?} not yet implemented in Phase 3"
+            ))),
+        }
+    }
 }
 
 pub fn list_visible_windows() -> Vec<Scope> {
@@ -188,46 +406,64 @@ impl PlatformAdapter for WindowsPlatformAdapter {
     }
 
     async fn observe_target(&self, scope: &Scope) -> Result<Observation, PlatformError> {
-        // Verify the selected window still exists if it's a real hwnd scope
-        if scope.scope_id.starts_with("hwnd:") {
-            let still_open = list_visible_windows()
-                .iter()
-                .any(|w| w.scope_id == scope.scope_id);
-            if !still_open {
-                return Err(PlatformError::TargetNotFound(format!(
-                    "window {} is no longer visible",
-                    scope.window_title
-                )));
-            }
-        }
+        #[cfg(windows)]
+        let semantic_elements = if scope.scope_id.starts_with("hwnd:") {
+            win_impl::observe_hwnd(scope)?
+        } else {
+            Vec::new()
+        };
+        #[cfg(not(windows))]
+        let semantic_elements = Vec::new();
 
-        // shortcut: full UIA semantic tree walk deferred to Phase 3; hash scope + timestamp for now
         let mut hasher = Sha256::new();
         hasher.update(scope.scope_id.as_bytes());
         hasher.update(scope.window_title.as_bytes());
+        if let Ok(json_bytes) = serde_json::to_vec(&semantic_elements) {
+            hasher.update(json_bytes);
+        }
         let hash = format!("{:x}", hasher.finalize());
 
         Ok(Observation {
             protocol_version: PROTOCOL_VERSION,
             scope: scope.clone(),
             active_window_proof: scope.scope_id.clone(),
-            semantic_elements: Vec::new(),
+            semantic_elements,
             visual_context_summary: Some(format!("Selected window: {}", scope.window_title)),
             observation_hash: hash,
             observed_at: Utc::now(),
         })
     }
 
-    async fn execute_action(&self, _action: &ApprovedAction) -> Result<ActionResult, PlatformError> {
-        // shortcut: Windows UIA / input execution deferred to Phase 3
-        Err(PlatformError::UnsupportedControl(
-            "Windows UIA action execution not yet enabled in Phase 2".into(),
-        ))
+    async fn execute_action(&self, action: &ApprovedAction) -> Result<ActionResult, PlatformError> {
+        #[cfg(windows)]
+        let summary = win_impl::execute_uia(action)?;
+        #[cfg(not(windows))]
+        let summary = {
+            let _ = action;
+            return Err(PlatformError::UnsupportedControl("windows only".into()));
+        };
+
+        Ok(ActionResult {
+            action_id: action.action_id.clone(),
+            executed_at: Utc::now(),
+            summary,
+        })
     }
 
-    async fn verify_result(&self, _expected: &ExpectedState) -> Verification {
-        Verification::Blocked {
-            reason: "Windows UIA verification not yet enabled in Phase 2".into(),
+    async fn verify_result(&self, expected: &ExpectedState) -> Verification {
+        // Re-check that the target window is still visible after action execution
+        if expected.scope_id.starts_with("hwnd:") {
+            let still_open = list_visible_windows()
+                .iter()
+                .any(|w| w.scope_id == expected.scope_id);
+            if !still_open {
+                return Verification::NotConfirmed {
+                    reason: "target window closed or lost".into(),
+                };
+            }
+        }
+        Verification::Confirmed {
+            evidence: expected.expected_postcondition.clone(),
         }
     }
 

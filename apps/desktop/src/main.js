@@ -5,4 +5,6 @@ import '@snippy/ui/src/tokens/primitives.css';
 import '@snippy/ui/src/tokens/semantic.css';
 import '@snippy/ui/src/tokens/component.css';
 import { App } from './App.js';
-createRoot(document.getElementById('root')).render(_jsx(StrictMode, { children: _jsx(App, {}) }));
+import { Overlay } from './Overlay.js';
+const isOverlay = window.location.hash === '#overlay';
+createRoot(document.getElementById('root')).render(_jsx(StrictMode, { children: isOverlay ? _jsx(Overlay, {}) : _jsx(App, {}) }));

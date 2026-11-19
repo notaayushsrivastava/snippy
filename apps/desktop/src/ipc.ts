@@ -59,9 +59,31 @@ export async function deleteSession(sessionId: string): Promise<void> {
   memorySessions = memorySessions.filter((s) => s.session_id !== sessionId);
 }
 
-export async function startAndStep(task: string, scope: Scope): Promise<StepResponse> {
+export type ProviderKind = 'demo' | 'openai' | 'gemini';
+
+export async function setProviderKey(provider: ProviderKind, apiKey: string): Promise<void> {
   const tauri = getTauri();
-  if (tauri) return tauri.invoke<StepResponse>('start_and_step', { task, scope });
+  if (tauri) return tauri.invoke<void>('set_provider_key', { provider, apiKey });
+}
+
+export async function hasProviderKey(provider: ProviderKind): Promise<boolean> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<boolean>('has_provider_key', { provider });
+  return false;
+}
+
+export async function deleteProviderKey(provider: ProviderKind): Promise<void> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<void>('delete_provider_key', { provider });
+}
+
+export async function startAndStep(
+  task: string,
+  scope: Scope,
+  provider: ProviderKind = 'demo',
+): Promise<StepResponse> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<StepResponse>('start_and_step', { task, scope, provider });
 
   const now = new Date().toISOString();
   const session: SessionRecord = {
@@ -108,17 +130,24 @@ export async function startAndStep(task: string, scope: Scope): Promise<StepResp
   };
 }
 
-export async function stepSession(sessionId: string): Promise<StepResponse> {
+export async function stepSession(
+  sessionId: string,
+  provider: ProviderKind = 'demo',
+): Promise<StepResponse> {
   const tauri = getTauri();
-  if (tauri) return tauri.invoke<StepResponse>('step_session', { sessionId });
+  if (tauri) return tauri.invoke<StepResponse>('step_session', { sessionId, provider });
   const existing = memorySessions.find((s) => s.session_id === sessionId);
   if (!existing) throw new Error('Session not found');
   return { session: existing, outcome: { outcome: 'complete', summary: 'Completed' } };
 }
 
-export async function approveAction(sessionId: string, actionId: string): Promise<StepResponse> {
+export async function approveAction(
+  sessionId: string,
+  actionId: string,
+  provider: ProviderKind = 'demo',
+): Promise<StepResponse> {
   const tauri = getTauri();
-  if (tauri) return tauri.invoke<StepResponse>('approve_action', { sessionId, actionId });
+  if (tauri) return tauri.invoke<StepResponse>('approve_action', { sessionId, actionId, provider });
   memorySessions = memorySessions.map((s) =>
     s.session_id === sessionId ? { ...s, status: 'complete' } : s,
   );
@@ -145,4 +174,9 @@ export async function stopTask(sessionId: string): Promise<SessionRecord> {
     s.session_id === sessionId ? { ...s, status: 'stopped' } : s,
   );
   return memorySessions.find((s) => s.session_id === sessionId)!;
+}
+
+export async function hideOverlayHighlight(): Promise<void> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<void>('hide_overlay_highlight');
 }

@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/platform-contract",
     "crates/platform-windows",
+    "crates/provider-openai",
+    "crates/provider-gemini",
     "crates/agent-core",
     "crates/session-store",
     "apps/desktop/src-tauri",
@@ -16,6 +18,7 @@ license = "MIT"
 [workspace.dependencies]
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"

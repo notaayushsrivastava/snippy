@@ -1,7 +1,7 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useState } from 'react';
 import { ActionCard, ApprovalCard, ScopeChip, SecretHandoff, StopControl, TimelineItem, } from '@snippy/ui';
-import { approveAction, deleteSession, listSessions, listWindows, rejectAction, startAndStep, stepSession, stopTask, } from './ipc.js';
+import { approveAction, deleteProviderKey, deleteSession, hasProviderKey, listSessions, listWindows, rejectAction, setProviderKey, startAndStep, stepSession, stopTask, } from './ipc.js';
 export function App() {
     const [theme, setTheme] = useState('dark');
     const [windows, setWindows] = useState([]);
@@ -11,6 +11,10 @@ export function App() {
     const [pendingApproval, setPendingApproval] = useState(null);
     const [secretReason, setSecretReason] = useState(null);
     const [task, setTask] = useState('');
+    const [provider, setProvider] = useState('demo');
+    const [apiKeyInput, setApiKeyInput] = useState('');
+    const [hasKey, setHasKey] = useState(false);
+    const [errorMsg, setErrorMsg] = useState(null);
     useEffect(() => {
         void (async () => {
             const [winList, sessList] = await Promise.all([listWindows(), listSessions()]);
@@ -19,6 +23,13 @@ export function App() {
             setSessions(sessList);
         })();
     }, []);
+    useEffect(() => {
+        if (provider === 'demo') {
+            setHasKey(false);
+            return;
+        }
+        void hasProviderKey(provider).then(setHasKey).catch(() => setHasKey(false));
+    }, [provider]);
     const refreshSessions = async () => {
         setSessions(await listSessions());
     };
@@ -40,19 +51,31 @@ export function App() {
     const handleStart = async () => {
         if (!task.trim() || !selectedScope)
             return;
-        let res = await startAndStep(task.trim(), selectedScope);
-        if (res.outcome.outcome === 'executed') {
-            res = await stepSession(res.session.session_id);
+        setErrorMsg(null);
+        try {
+            let res = await startAndStep(task.trim(), selectedScope, provider);
+            if (res.outcome.outcome === 'executed') {
+                res = await stepSession(res.session.session_id, provider);
+            }
+            applyOutcome(res.session, res.outcome);
+            await refreshSessions();
         }
-        applyOutcome(res.session, res.outcome);
-        await refreshSessions();
+        catch (err) {
+            setErrorMsg(String(err));
+        }
     };
     const handleApprove = async () => {
         if (!activeSession || !pendingApproval)
             return;
-        const res = await approveAction(activeSession.session_id, pendingApproval.action.action_id);
-        applyOutcome(res.session, res.outcome);
-        await refreshSessions();
+        setErrorMsg(null);
+        try {
+            const res = await approveAction(activeSession.session_id, pendingApproval.action.action_id, provider);
+            applyOutcome(res.session, res.outcome);
+            await refreshSessions();
+        }
+        catch (err) {
+            setErrorMsg(String(err));
+        }
     };
     const handleReject = async () => {
         if (!activeSession)
@@ -84,6 +107,17 @@ export function App() {
         activeSession.status !== 'complete' &&
         activeSession.status !== 'stopped' &&
         activeSession.status !== 'blocked';
+    useEffect(() => {
+        if (!isRunning)
+            return;
+        const onKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                void handleStop();
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    });
     return (_jsxs("div", { "data-theme": theme, style: {
             minHeight: '100vh',
             background: 'var(--surface-canvas)',
@@ -100,7 +134,41 @@ export function App() {
                                     borderRadius: 'var(--radius-sm)',
                                     padding: 'var(--space-1) var(--space-3)',
                                     cursor: 'pointer',
-                                }, children: theme === 'dark' ? 'Light' : 'Dark' }), isRunning ? _jsx(StopControl, { onStop: () => void handleStop() }) : null] })] }), _jsxs("div", { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 'var(--space-4)', maxWidth: '560px' }, children: [_jsxs("section", { style: { display: 'grid', gap: 'var(--space-2)' }, children: [_jsx("label", { htmlFor: "scope-select", style: { fontSize: '14px', color: 'var(--content-secondary)' }, children: "Target window" }), _jsx("select", { id: "scope-select", value: selectedScope?.scope_id ?? '', onChange: (e) => {
+                                }, children: theme === 'dark' ? 'Light' : 'Dark' }), isRunning ? _jsx(StopControl, { onStop: () => void handleStop() }) : null] })] }), _jsxs("div", { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 'var(--space-4)', maxWidth: '560px' }, children: [_jsxs("section", { style: { display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '14px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), style: {
+                                    padding: 'var(--space-1) var(--space-2)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    border: '1px solid var(--border-subtle)',
+                                    background: 'var(--surface-panel)',
+                                    color: 'var(--content-primary)',
+                                }, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "openai", children: "OpenAI" }), _jsx("option", { value: "gemini", children: "Gemini" })] }), provider !== 'demo' ? (_jsxs(_Fragment, { children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", style: {
+                                            flex: 1,
+                                            padding: 'var(--space-1) var(--space-2)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            border: '1px solid var(--border-subtle)',
+                                            background: 'var(--surface-panel)',
+                                            color: 'var(--content-primary)',
+                                        } }), _jsx("button", { type: "button", onClick: () => {
+                                            if (!apiKeyInput.trim())
+                                                return;
+                                            void setProviderKey(provider, apiKeyInput).then(() => {
+                                                setApiKeyInput('');
+                                                setHasKey(true);
+                                            });
+                                        }, style: {
+                                            background: 'var(--surface-panel)',
+                                            color: 'var(--content-primary)',
+                                            border: '1px solid var(--border-subtle)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            padding: 'var(--space-1) var(--space-3)',
+                                            cursor: 'pointer',
+                                        }, children: "Save Key" }), hasKey ? (_jsx("button", { type: "button", onClick: () => void deleteProviderKey(provider).then(() => setHasKey(false)), style: {
+                                            background: 'none',
+                                            color: 'var(--content-secondary)',
+                                            border: '1px solid var(--border-subtle)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            padding: 'var(--space-1) var(--space-2)',
+                                            cursor: 'pointer',
+                                        }, children: "Clear" })) : null] })) : null] }), errorMsg ? (_jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '14px' }, children: errorMsg })) : null, _jsxs("section", { style: { display: 'grid', gap: 'var(--space-2)' }, children: [_jsx("label", { htmlFor: "scope-select", style: { fontSize: '14px', color: 'var(--content-secondary)' }, children: "Target window" }), _jsx("select", { id: "scope-select", value: selectedScope?.scope_id ?? '', onChange: (e) => {
                                     const found = windows.find((w) => w.scope_id === e.target.value) ?? null;
                                     setSelectedScope(found);
                                 }, style: {

@@ -13,6 +13,8 @@ async-trait.workspace = true
 chrono.workspace = true
 platform-contract = { path = "../../../crates/platform-contract" }
 platform-windows = { path = "../../../crates/platform-windows" }
+provider-gemini = { path = "../../../crates/provider-gemini" }
+provider-openai = { path = "../../../crates/provider-openai" }
 serde.workspace = true
 serde_json.workspace = true
 session-store = { path = "../../../crates/session-store" }

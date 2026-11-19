@@ -37,10 +37,26 @@ export async function deleteSession(sessionId) {
         return tauri.invoke('delete_session', { sessionId });
     memorySessions = memorySessions.filter((s) => s.session_id !== sessionId);
 }
-export async function startAndStep(task, scope) {
+export async function setProviderKey(provider, apiKey) {
     const tauri = getTauri();
     if (tauri)
-        return tauri.invoke('start_and_step', { task, scope });
+        return tauri.invoke('set_provider_key', { provider, apiKey });
+}
+export async function hasProviderKey(provider) {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('has_provider_key', { provider });
+    return false;
+}
+export async function deleteProviderKey(provider) {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('delete_provider_key', { provider });
+}
+export async function startAndStep(task, scope, provider = 'demo') {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('start_and_step', { task, scope, provider });
     const now = new Date().toISOString();
     const session = {
         session_id: `mock-${Date.now()}`,
@@ -85,19 +101,19 @@ export async function startAndStep(task, scope) {
         outcome: { outcome: 'awaiting_approval', action, consequence: action.expected_postcondition },
     };
 }
-export async function stepSession(sessionId) {
+export async function stepSession(sessionId, provider = 'demo') {
     const tauri = getTauri();
     if (tauri)
-        return tauri.invoke('step_session', { sessionId });
+        return tauri.invoke('step_session', { sessionId, provider });
     const existing = memorySessions.find((s) => s.session_id === sessionId);
     if (!existing)
         throw new Error('Session not found');
     return { session: existing, outcome: { outcome: 'complete', summary: 'Completed' } };
 }
-export async function approveAction(sessionId, actionId) {
+export async function approveAction(sessionId, actionId, provider = 'demo') {
     const tauri = getTauri();
     if (tauri)
-        return tauri.invoke('approve_action', { sessionId, actionId });
+        return tauri.invoke('approve_action', { sessionId, actionId, provider });
     memorySessions = memorySessions.map((s) => s.session_id === sessionId ? { ...s, status: 'complete' } : s);
     const updated = memorySessions.find((s) => s.session_id === sessionId);
     return {
@@ -118,4 +134,9 @@ export async function stopTask(sessionId) {
         return tauri.invoke('stop_task', { sessionId });
     memorySessions = memorySessions.map((s) => s.session_id === sessionId ? { ...s, status: 'stopped' } : s);
     return memorySessions.find((s) => s.session_id === sessionId);
+}
+export async function hideOverlayHighlight() {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('hide_overlay_highlight');
 }

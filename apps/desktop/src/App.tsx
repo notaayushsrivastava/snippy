@@ -10,13 +10,17 @@ import {
 } from '@snippy/ui';
 import {
   approveAction,
+  deleteProviderKey,
   deleteSession,
+  hasProviderKey,
   listSessions,
   listWindows,
   rejectAction,
+  setProviderKey,
   startAndStep,
   stepSession,
   stopTask,
+  type ProviderKind,
 } from './ipc.js';
 
 export function App() {
@@ -31,6 +35,10 @@ export function App() {
   } | null>(null);
   const [secretReason, setSecretReason] = useState<string | null>(null);
   const [task, setTask] = useState('');
+  const [provider, setProvider] = useState<ProviderKind>('demo');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -40,6 +48,14 @@ export function App() {
       setSessions(sessList);
     })();
   }, []);
+
+  useEffect(() => {
+    if (provider === 'demo') {
+      setHasKey(false);
+      return;
+    }
+    void hasProviderKey(provider).then(setHasKey).catch(() => setHasKey(false));
+  }, [provider]);
 
   const refreshSessions = async () => {
     setSessions(await listSessions());
@@ -64,19 +80,33 @@ export function App() {
 
   const handleStart = async () => {
     if (!task.trim() || !selectedScope) return;
-    let res = await startAndStep(task.trim(), selectedScope);
-    if (res.outcome.outcome === 'executed') {
-      res = await stepSession(res.session.session_id);
+    setErrorMsg(null);
+    try {
+      let res = await startAndStep(task.trim(), selectedScope, provider);
+      if (res.outcome.outcome === 'executed') {
+        res = await stepSession(res.session.session_id, provider);
+      }
+      applyOutcome(res.session, res.outcome);
+      await refreshSessions();
+    } catch (err) {
+      setErrorMsg(String(err));
     }
-    applyOutcome(res.session, res.outcome);
-    await refreshSessions();
   };
 
   const handleApprove = async () => {
     if (!activeSession || !pendingApproval) return;
-    const res = await approveAction(activeSession.session_id, pendingApproval.action.action_id);
-    applyOutcome(res.session, res.outcome);
-    await refreshSessions();
+    setErrorMsg(null);
+    try {
+      const res = await approveAction(
+        activeSession.session_id,
+        pendingApproval.action.action_id,
+        provider,
+      );
+      applyOutcome(res.session, res.outcome);
+      await refreshSessions();
+    } catch (err) {
+      setErrorMsg(String(err));
+    }
   };
 
   const handleReject = async () => {
@@ -111,6 +141,17 @@ export function App() {
     activeSession.status !== 'complete' &&
     activeSession.status !== 'stopped' &&
     activeSession.status !== 'blocked';
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        void handleStop();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   return (
     <div
@@ -149,6 +190,89 @@ export function App() {
       </header>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 'var(--space-4)', maxWidth: '560px' }}>
+        <section style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label htmlFor="provider-select" style={{ fontSize: '14px', color: 'var(--content-secondary)' }}>
+            Provider
+          </label>
+          <select
+            id="provider-select"
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as ProviderKind)}
+            style={{
+              padding: 'var(--space-1) var(--space-2)',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--surface-panel)',
+              color: 'var(--content-primary)',
+            }}
+          >
+            <option value="demo">Demo (Local Mock)</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+          </select>
+          {provider !== 'demo' ? (
+            <>
+              <input
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder={hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`}
+                aria-label="Provider API key"
+                style={{
+                  flex: 1,
+                  padding: 'var(--space-1) var(--space-2)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)',
+                  background: 'var(--surface-panel)',
+                  color: 'var(--content-primary)',
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!apiKeyInput.trim()) return;
+                  void setProviderKey(provider, apiKeyInput).then(() => {
+                    setApiKeyInput('');
+                    setHasKey(true);
+                  });
+                }}
+                style={{
+                  background: 'var(--surface-panel)',
+                  color: 'var(--content-primary)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: 'var(--space-1) var(--space-3)',
+                  cursor: 'pointer',
+                }}
+              >
+                Save Key
+              </button>
+              {hasKey ? (
+                <button
+                  type="button"
+                  onClick={() => void deleteProviderKey(provider).then(() => setHasKey(false))}
+                  style={{
+                    background: 'none',
+                    color: 'var(--content-secondary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: 'var(--space-1) var(--space-2)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+
+        {errorMsg ? (
+          <p role="alert" style={{ color: 'var(--status-danger)', margin: 0, fontSize: '14px' }}>
+            {errorMsg}
+          </p>
+        ) : null}
+
         <section style={{ display: 'grid', gap: 'var(--space-2)' }}>
           <label htmlFor="scope-select" style={{ fontSize: '14px', color: 'var(--content-secondary)' }}>
             Target window
