@@ -2,15 +2,16 @@
 resolver = "2"
 members = [
     "crates/platform-contract",
+    "crates/platform-windows",
     "crates/agent-core",
     "crates/session-store",
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["Snippy Contributors"]
 
 [workspace.dependencies]
 async-trait = "0.1"
