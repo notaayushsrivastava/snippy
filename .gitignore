@@ -17,3 +17,4 @@ coverage/
 !.env.example
 .DS_Store
 Thumbs.db
+ui.html

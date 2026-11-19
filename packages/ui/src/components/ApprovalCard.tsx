@@ -25,21 +25,20 @@ export function ApprovalCard({
       role="alertdialog"
       aria-labelledby="approval-title"
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <strong id="approval-title">Needs your approval</strong>
-        <span className={styles.badge}>{action.risk}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span className={`${styles.pill} ${styles.pillAmber}`}>Needs approval</span>
+        <span className={styles.muted}>{action.risk}</span>
       </div>
-      <p>
-        Action: <strong>{action.kind}</strong> on <strong>{targetLabel}</strong>
-      </p>
-      <p className={styles.muted}>Consequence: {consequence}</p>
-      <p className={styles.muted}>Reason: {action.reason}</p>
+      <div id="approval-title" style={{ fontSize: '18px', fontWeight: 600, lineHeight: '24px' }}>
+        {action.kind} on {targetLabel}?
+      </div>
+      <p className={styles.muted}>{consequence} — {action.reason}</p>
       <div className={styles.buttonRow}>
         {isDestructive ? (
           <>
             <button
               type="button"
-              className={`${styles.btnDanger} ${styles.focusable}`}
+              className={`${styles.btnSecondary} ${styles.focusable}`}
               onClick={onReject}
             >
               Reject
@@ -53,20 +52,22 @@ export function ApprovalCard({
             </button>
             <button
               type="button"
-              className={`${styles.btnPrimary} ${styles.focusable}`}
+              className={`${styles.btnApprove} ${styles.focusable}`}
               onClick={onApprove}
             >
-              Approve
+              <span>Approve</span>
+              <span className={styles.stopKbd}>⏎</span>
             </button>
           </>
         ) : (
           <>
             <button
               type="button"
-              className={`${styles.btnPrimary} ${styles.focusable}`}
+              className={`${styles.btnApprove} ${styles.focusable}`}
               onClick={onApprove}
             >
-              Approve
+              <span>Approve</span>
+              <span className={styles.stopKbd}>⏎</span>
             </button>
             <button
               type="button"
@@ -77,7 +78,7 @@ export function ApprovalCard({
             </button>
             <button
               type="button"
-              className={`${styles.btnDanger} ${styles.focusable}`}
+              className={`${styles.btnGhost} ${styles.focusable}`}
               onClick={onReject}
             >
               Reject

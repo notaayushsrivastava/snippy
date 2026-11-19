@@ -227,6 +227,7 @@ async fn delete_session(state: State<'_, AppState>, session_id: String) -> Resul
 
 #[tauri::command]
 async fn start_and_step(
+    app: AppHandle,
     state: State<'_, AppState>,
     task: String,
     scope: Scope,
@@ -238,19 +239,21 @@ async fn start_and_step(
         .create_session(task, scope)
         .await
         .map_err(|e| e.to_string())?;
-    step_session_internal(&state, &session.session_id, provider.as_deref().unwrap_or("demo")).await
+    step_session_internal(&app, &state, &session.session_id, provider.as_deref().unwrap_or("demo")).await
 }
 
 #[tauri::command]
 async fn step_session(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     provider: Option<String>,
 ) -> Result<StepResponse, String> {
-    step_session_internal(&state, &session_id, provider.as_deref().unwrap_or("demo")).await
+    step_session_internal(&app, &state, &session_id, provider.as_deref().unwrap_or("demo")).await
 }
 
 async fn step_session_internal(
+    app: &AppHandle,
     state: &AppState,
     session_id: &str,
     provider: &str,
@@ -296,6 +299,19 @@ async fn step_session_internal(
             .lock()
             .await
             .insert(action.action_id.clone(), (**action).clone());
+        if let Some(hint) = action.target.coordinate_hint {
+            let _ = show_overlay_highlight(
+                app.clone(),
+                Bounds {
+                    x: hint.x.saturating_sub(40),
+                    y: hint.y.saturating_sub(20),
+                    width: 180,
+                    height: 56,
+                },
+                action.reason.clone(),
+                1,
+            );
+        }
     }
     let session = state
         .store
@@ -307,11 +323,13 @@ async fn step_session_internal(
 
 #[tauri::command]
 async fn approve_action(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     action_id: String,
     provider: Option<String>,
 ) -> Result<StepResponse, String> {
+    let _ = hide_overlay_highlight(app);
     let approved = state
         .pending_approvals
         .lock()
@@ -354,9 +372,11 @@ async fn approve_action(
 
 #[tauri::command]
 async fn reject_action(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionRecord, String> {
+    let _ = hide_overlay_highlight(app);
     state
         .store
         .update_status(&session_id, SessionStatus::Blocked)

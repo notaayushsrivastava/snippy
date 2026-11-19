@@ -1,0 +1,228 @@
+.shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+  font-family: var(--font-sans);
+  color: var(--content-primary);
+  background: var(--surface-canvas);
+}
+
+.bar {
+  width: 100%;
+  max-width: 760px;
+  background: var(--surface-bar);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--bar-shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 68px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.taskInput {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--content-primary);
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.taskInput::placeholder {
+  color: var(--content-muted);
+}
+
+.pillsRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.pillNeutral {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  color: var(--content-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.sectionLabel {
+  padding: 12px 20px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--content-muted);
+}
+
+.windowRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 48px;
+  padding: 0 20px 0 17px;
+  background: transparent;
+  border: 0;
+  border-left: 3px solid transparent;
+  color: var(--content-primary);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.windowRow:hover {
+  background: var(--surface-hover);
+}
+
+.windowRowSelected {
+  background: rgba(61, 219, 176, 0.08);
+  border-left-color: var(--status-safe);
+}
+
+.windowRow:focus-visible,
+.suggestRow:focus-visible,
+.iconBtn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.suggestRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 44px;
+  padding: 0 20px;
+  background: transparent;
+  border: 0;
+  color: var(--content-primary);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.suggestRow:hover {
+  background: var(--surface-hover);
+}
+
+.iconBtn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--content-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.bodyPad {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  min-height: 46px;
+  padding: 8px 20px;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--content-secondary);
+}
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--kbd-border);
+  background: var(--kbd-bg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--content-secondary);
+}
+
+.progressTrack {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--border-subtle);
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--status-safe);
+  transition: width var(--duration-normal) ease;
+}
+
+.pulseWrap {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pulseRing {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(61, 219, 176, 0.35);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pulseRing {
+    animation: snpPulse 1.6s ease-out infinite;
+  }
+}
+
+@keyframes snpPulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}

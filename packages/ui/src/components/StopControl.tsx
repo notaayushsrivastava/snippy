@@ -13,8 +13,11 @@ export function StopControl({ onStop, shortcutLabel = 'Esc' }: StopControlProps)
       onClick={onStop}
       aria-label={`Stop task (${shortcutLabel})`}
     >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <rect x="4" y="4" width="16" height="16" rx="3" />
+      </svg>
       <span>Stop</span>
-      <kbd className={styles.badge}>{shortcutLabel}</kbd>
+      <kbd className={styles.stopKbd}>{shortcutLabel}</kbd>
     </button>
   );
 }

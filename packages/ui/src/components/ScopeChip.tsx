@@ -9,13 +9,15 @@ export interface ScopeChipProps {
 export function ScopeChip({ scope, onChangeScope }: ScopeChipProps) {
   return (
     <div className={styles.scopeChip} role="status" aria-live="polite">
+      <span className={styles.scopeDot} aria-hidden="true" />
       <span>
-        Seeing: <strong>{scope.app_name}</strong> — {scope.window_title}
+        {scope.app_name} · {scope.window_title}
       </span>
       {onChangeScope ? (
         <button
           type="button"
-          className={`${styles.btnSecondary} ${styles.focusable}`}
+          className={`${styles.btnGhost} ${styles.focusable}`}
+          style={{ height: '22px', padding: '0 6px', fontSize: '11.5px' }}
           onClick={onChangeScope}
         >
           Change

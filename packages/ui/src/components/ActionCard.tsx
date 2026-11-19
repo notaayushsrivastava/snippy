@@ -20,11 +20,11 @@ export function ActionCard({
 }: ActionCardProps) {
   return (
     <article className={styles.card} aria-label={`Step ${stepNumber}: ${verb}`}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <strong className={styles.tabular}>
-          Step {stepNumber}: {verb} {target}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+        <strong className={styles.tabular} style={{ fontSize: '15px' }}>
+          {verb} {target}
         </strong>
-        <span className={styles.badge}>{risk}</span>
+        <span className={`${styles.pill} ${styles.pillMint}`}>{risk}</span>
       </div>
       <p className={styles.muted}>{reason}</p>
       <p className={styles.muted}>Expected: {expectedResult}</p>

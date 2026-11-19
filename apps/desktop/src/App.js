@@ -2,6 +2,12 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useEffect, useState } from 'react';
 import { ActionCard, ApprovalCard, ScopeChip, SecretHandoff, StopControl, TimelineItem, } from '@snippy/ui';
 import { approveAction, deleteProviderKey, deleteSession, hasProviderKey, listSessions, listWindows, rejectAction, setProviderKey, startAndStep, stepSession, stopTask, } from './ipc.js';
+import styles from './App.module.css';
+const SUGGESTED_TASKS = [
+    { title: 'Summarize what is visible in this window', tag: 'Observe' },
+    { title: 'Collect table items into a draft list', tag: 'Draft' },
+    { title: 'Find and focus the main search box', tag: 'Navigate' },
+];
 export function App() {
     const [theme, setTheme] = useState('dark');
     const [windows, setWindows] = useState([]);
@@ -14,6 +20,7 @@ export function App() {
     const [provider, setProvider] = useState('demo');
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [hasKey, setHasKey] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
     useEffect(() => {
         void (async () => {
@@ -48,12 +55,14 @@ export function App() {
             setSecretReason(null);
         }
     };
-    const handleStart = async () => {
-        if (!task.trim() || !selectedScope)
+    const handleStart = async (overrideTask) => {
+        const query = (overrideTask ?? task).trim();
+        if (!query || !selectedScope)
             return;
         setErrorMsg(null);
+        setShowSettings(false);
         try {
-            let res = await startAndStep(task.trim(), selectedScope, provider);
+            let res = await startAndStep(query, selectedScope, provider);
             if (res.outcome.outcome === 'executed') {
                 res = await stepSession(res.session.session_id, provider);
             }
@@ -94,13 +103,33 @@ export function App() {
         setSecretReason(null);
         await refreshSessions();
     };
+    const handleReset = () => {
+        setActiveSession(null);
+        setPendingApproval(null);
+        setSecretReason(null);
+        setErrorMsg(null);
+        setTask('');
+    };
     const handleDeleteSession = async (sessionId) => {
         await deleteSession(sessionId);
         if (activeSession?.session_id === sessionId) {
-            setActiveSession(null);
-            setPendingApproval(null);
+            handleReset();
         }
         await refreshSessions();
+    };
+    const handleResumeAfterTakeover = async () => {
+        if (!activeSession)
+            return;
+        setSecretReason(null);
+        setErrorMsg(null);
+        try {
+            const res = await stepSession(activeSession.session_id, provider);
+            applyOutcome(res.session, res.outcome);
+            await refreshSessions();
+        }
+        catch (err) {
+            setErrorMsg(String(err));
+        }
     };
     const isRunning = activeSession !== null &&
         activeSession.status !== 'ready' &&
@@ -108,115 +137,100 @@ export function App() {
         activeSession.status !== 'stopped' &&
         activeSession.status !== 'blocked';
     useEffect(() => {
-        if (!isRunning)
-            return;
         const onKeyDown = (e) => {
-            if (e.key === 'Escape') {
-                void handleStop();
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                setShowSettings((prev) => !prev);
+            }
+            else if (e.key === 'Enter' && pendingApproval) {
+                e.preventDefault();
+                void handleApprove();
+            }
+            else if (e.key === 'Enter' && secretReason) {
+                e.preventDefault();
+                void handleResumeAfterTakeover();
+            }
+            else if (e.key === 'Escape') {
+                if (pendingApproval) {
+                    void handleReject();
+                }
+                else if (isRunning) {
+                    void handleStop();
+                }
+                else if (showSettings) {
+                    setShowSettings(false);
+                }
             }
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     });
-    return (_jsxs("div", { "data-theme": theme, style: {
-            minHeight: '100vh',
-            background: 'var(--surface-canvas)',
-            color: 'var(--content-primary)',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            padding: 'var(--space-4)',
-            display: 'grid',
-            gap: 'var(--space-4)',
-            gridTemplateRows: 'auto 1fr',
-        }, children: [_jsxs("header", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-2)' }, children: [_jsx("h1", { style: { fontSize: '20px', margin: 0 }, children: "Snippy" }), _jsxs("div", { style: { display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }, children: [selectedScope ? _jsx(ScopeChip, { scope: selectedScope }) : null, _jsx("button", { type: "button", onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), style: {
-                                    background: 'var(--surface-panel)',
-                                    color: 'var(--content-primary)',
-                                    border: '1px solid var(--border-subtle)',
-                                    borderRadius: 'var(--radius-sm)',
-                                    padding: 'var(--space-1) var(--space-3)',
-                                    cursor: 'pointer',
-                                }, children: theme === 'dark' ? 'Light' : 'Dark' }), isRunning ? _jsx(StopControl, { onStop: () => void handleStop() }) : null] })] }), _jsxs("div", { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 'var(--space-4)', maxWidth: '560px' }, children: [_jsxs("section", { style: { display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '14px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), style: {
-                                    padding: 'var(--space-1) var(--space-2)',
-                                    borderRadius: 'var(--radius-sm)',
-                                    border: '1px solid var(--border-subtle)',
-                                    background: 'var(--surface-panel)',
-                                    color: 'var(--content-primary)',
-                                }, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "openai", children: "OpenAI" }), _jsx("option", { value: "gemini", children: "Gemini" })] }), provider !== 'demo' ? (_jsxs(_Fragment, { children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", style: {
-                                            flex: 1,
-                                            padding: 'var(--space-1) var(--space-2)',
-                                            borderRadius: 'var(--radius-sm)',
-                                            border: '1px solid var(--border-subtle)',
-                                            background: 'var(--surface-panel)',
-                                            color: 'var(--content-primary)',
-                                        } }), _jsx("button", { type: "button", onClick: () => {
-                                            if (!apiKeyInput.trim())
-                                                return;
-                                            void setProviderKey(provider, apiKeyInput).then(() => {
-                                                setApiKeyInput('');
-                                                setHasKey(true);
-                                            });
-                                        }, style: {
-                                            background: 'var(--surface-panel)',
-                                            color: 'var(--content-primary)',
-                                            border: '1px solid var(--border-subtle)',
-                                            borderRadius: 'var(--radius-sm)',
-                                            padding: 'var(--space-1) var(--space-3)',
-                                            cursor: 'pointer',
-                                        }, children: "Save Key" }), hasKey ? (_jsx("button", { type: "button", onClick: () => void deleteProviderKey(provider).then(() => setHasKey(false)), style: {
-                                            background: 'none',
-                                            color: 'var(--content-secondary)',
-                                            border: '1px solid var(--border-subtle)',
-                                            borderRadius: 'var(--radius-sm)',
-                                            padding: 'var(--space-1) var(--space-2)',
-                                            cursor: 'pointer',
-                                        }, children: "Clear" })) : null] })) : null] }), errorMsg ? (_jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '14px' }, children: errorMsg })) : null, _jsxs("section", { style: { display: 'grid', gap: 'var(--space-2)' }, children: [_jsx("label", { htmlFor: "scope-select", style: { fontSize: '14px', color: 'var(--content-secondary)' }, children: "Target window" }), _jsx("select", { id: "scope-select", value: selectedScope?.scope_id ?? '', onChange: (e) => {
-                                    const found = windows.find((w) => w.scope_id === e.target.value) ?? null;
-                                    setSelectedScope(found);
-                                }, style: {
-                                    padding: 'var(--space-2)',
-                                    borderRadius: 'var(--radius-sm)',
-                                    border: '1px solid var(--border-subtle)',
-                                    background: 'var(--surface-panel)',
-                                    color: 'var(--content-primary)',
-                                }, children: windows.map((w) => (_jsxs("option", { value: w.scope_id, children: [w.app_name, " \u2014 ", w.window_title] }, w.scope_id))) }), _jsxs("div", { style: { display: 'flex', gap: 'var(--space-2)' }, children: [_jsx("input", { type: "text", value: task, onChange: (e) => setTask(e.target.value), placeholder: "Tell Snippy what you need done...", "aria-label": "Task description", style: {
-                                            flex: 1,
-                                            fontSize: '16px',
-                                            padding: 'var(--space-2) var(--space-3)',
-                                            borderRadius: 'var(--radius-sm)',
-                                            border: '1px solid var(--border-subtle)',
-                                            background: 'var(--surface-panel)',
-                                            color: 'var(--content-primary)',
-                                        } }), _jsx("button", { type: "button", onClick: () => void handleStart(), style: {
-                                            background: 'var(--button-primary-bg)',
-                                            color: 'var(--white)',
-                                            border: 'none',
-                                            borderRadius: 'var(--radius-sm)',
-                                            padding: 'var(--space-2) var(--space-4)',
-                                            fontWeight: 600,
-                                            cursor: 'pointer',
-                                        }, children: "Start" })] })] }), pendingApproval ? (_jsx(ApprovalCard, { action: pendingApproval.action, consequence: pendingApproval.consequence, onApprove: () => void handleApprove(), onTakeOver: () => {
-                            setPendingApproval(null);
-                            setSecretReason('User takeover requested.');
-                        }, onReject: () => void handleReject() })) : null, secretReason ? (_jsx(SecretHandoff, { reason: secretReason, onContinue: () => setSecretReason(null), onStop: () => void handleStop() })) : null, activeSession?.status === 'complete' ? (_jsx(ActionCard, { stepNumber: activeSession.steps.length, verb: "Verified", target: activeSession.scope.window_title, reason: "Task completed within approved scope.", expectedResult: "All steps verified", risk: "observe" })) : null, activeSession ? (_jsxs("section", { "aria-label": "Inspector", children: [_jsxs("p", { style: { fontSize: '14px', color: 'var(--content-secondary)', margin: '0 0 var(--space-2)' }, children: ["Only the selected ", activeSession.scope.app_name, " window is being observed. Status: ", _jsx("strong", { children: activeSession.status })] }), _jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 'var(--space-2)' }, children: activeSession.steps.map((step) => (_jsx(TimelineItem, { step: step }, step.step_number))) })] })) : null, _jsxs("section", { "aria-label": "Recent sessions", children: [_jsx("h2", { style: { fontSize: '16px', margin: '0 0 var(--space-2)' }, children: "Recent local sessions" }), _jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 'var(--space-2)' }, children: sessions.map((s) => (_jsxs("li", { style: {
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        alignItems: 'center',
-                                        padding: 'var(--space-2) var(--space-3)',
-                                        background: 'var(--surface-panel)',
-                                        border: '1px solid var(--border-subtle)',
-                                        borderRadius: 'var(--radius-sm)',
-                                    }, children: [_jsxs("button", { type: "button", onClick: () => setActiveSession(s), style: {
-                                                background: 'none',
-                                                border: 'none',
-                                                color: 'var(--content-primary)',
-                                                textAlign: 'left',
-                                                cursor: 'pointer',
-                                                flex: 1,
-                                            }, children: [s.task, " (", s.status, ")"] }), _jsx("button", { type: "button", onClick: () => void handleDeleteSession(s.session_id), "aria-label": `Delete session ${s.task}`, style: {
-                                                background: 'none',
-                                                border: '1px solid var(--border-subtle)',
-                                                borderRadius: 'var(--radius-sm)',
-                                                color: 'var(--content-secondary)',
-                                                padding: '2px 8px',
-                                                cursor: 'pointer',
-                                            }, children: "Delete" })] }, s.session_id))) })] })] })] }));
+    const providerLabel = provider === 'demo'
+        ? 'Demo · local mock'
+        : `${provider === 'openai' ? 'OpenAI' : 'Gemini'} · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
+    return (_jsx("div", { className: styles.shell, "data-theme": theme, children: _jsxs("main", { className: styles.bar, "aria-label": "Snippy Command Bar", children: [!activeSession ? (_jsxs(_Fragment, { children: [_jsxs("div", { className: styles.header, "data-tauri-drag-region": true, children: [_jsxs("svg", { width: "26", height: "26", viewBox: "0 0 28 28", fill: "none", stroke: "var(--status-safe)", strokeWidth: "2.2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [_jsx("path", { d: "M4 10V6a2 2 0 0 1 2-2h4M18 4h4a2 2 0 0 1 2 2v4M24 18v4a2 2 0 0 1-2 2h-4M10 24H6a2 2 0 0 1-2-2v-4" }), _jsx("circle", { cx: "14", cy: "14", r: "3", fill: "var(--status-safe)", stroke: "none" })] }), _jsx("input", { type: "text", className: styles.taskInput, value: task, onChange: (e) => setTask(e.target.value), onKeyDown: (e) => {
+                                        if (e.key === 'Enter')
+                                            void handleStart();
+                                    }, placeholder: "Tell Snippy what to do on your screen", "aria-label": "Task for Snippy" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => setShowSettings((s) => !s), "aria-expanded": showSettings, children: "Settings" }), _jsx("button", { type: "button", className: styles.iconBtn, style: {
+                                        background: 'var(--action-primary)',
+                                        color: '#0b1020',
+                                        borderColor: 'transparent',
+                                        fontWeight: 600,
+                                    }, onClick: () => void handleStart(), children: "Run \u23CE" })] }), _jsxs("div", { className: styles.pillsRow, children: [selectedScope ? _jsx(ScopeChip, { scope: selectedScope }) : null, _jsx("div", { className: styles.pillNeutral, children: "Ask before changes" }), _jsx("div", { style: { flex: 1 } }), _jsxs("div", { style: { display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: 'var(--content-muted)' }, children: [_jsx("span", { style: {
+                                                width: '7px',
+                                                height: '7px',
+                                                borderRadius: '50%',
+                                                background: provider === 'demo' || hasKey ? 'var(--status-safe)' : 'var(--status-caution)',
+                                            } }), _jsx("span", { children: providerLabel })] })] })] })) : (_jsxs("div", { className: styles.header, "data-tauri-drag-region": true, children: [pendingApproval ? (_jsx("div", { style: {
+                                width: '24px',
+                                height: '24px',
+                                borderRadius: '50%',
+                                border: '2px solid var(--status-caution)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                            }, children: _jsx("div", { style: { width: '8px', height: '8px', borderRadius: '50%', background: 'var(--status-caution)' } }) })) : secretReason ? (_jsx("div", { style: {
+                                width: '10px',
+                                height: '10px',
+                                borderRadius: '50%',
+                                background: 'var(--status-secret)',
+                                flexShrink: 0,
+                            } })) : (_jsxs("div", { className: styles.pulseWrap, children: [isRunning ? _jsx("div", { className: styles.pulseRing }) : null, _jsx("div", { style: { width: '10px', height: '10px', borderRadius: '50%', background: 'var(--status-safe)' } })] })), _jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [_jsx("div", { style: { fontSize: '15px', fontWeight: 600, lineHeight: '20px' }, children: pendingApproval
+                                        ? 'Waiting for your approval'
+                                        : secretReason
+                                            ? 'Your turn: enter sensitive details'
+                                            : activeSession.task }), _jsxs("div", { style: { fontSize: '12.5px', color: 'var(--content-muted)', lineHeight: '17px' }, children: [activeSession.scope.app_name, " \u00B7 ", activeSession.status, " \u00B7 ", activeSession.steps.length, " step(s)"] })] }), !isRunning ? (_jsx("button", { type: "button", className: styles.iconBtn, onClick: handleReset, children: "New task" })) : (_jsx(StopControl, { onStop: () => void handleStop() })), _jsx("div", { className: styles.progressTrack, children: _jsx("div", { className: styles.progressFill, style: {
+                                    width: activeSession.status === 'complete' ? '100%' : '50%',
+                                    background: pendingApproval
+                                        ? 'var(--status-caution)'
+                                        : secretReason
+                                            ? 'var(--status-secret)'
+                                            : 'var(--status-safe)',
+                                } }) })] })), errorMsg ? (_jsx("div", { className: styles.bodyPad, children: _jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '13px' }, children: errorMsg }) })) : null, showSettings ? (_jsxs("section", { className: styles.bodyPad, "aria-label": "Settings and History", children: [_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '13px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), className: styles.iconBtn, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "openai", children: "OpenAI" }), _jsx("option", { value: "gemini", children: "Gemini" })] }), _jsxs("button", { type: "button", className: styles.iconBtn, onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), children: ["Theme: ", theme] })] }), provider !== 'demo' ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' }, children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", className: styles.iconBtn, style: { flex: 1, textAlign: 'left', cursor: 'text' } }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
+                                        if (!apiKeyInput.trim())
+                                            return;
+                                        void setProviderKey(provider, apiKeyInput).then(() => {
+                                            setApiKeyInput('');
+                                            setHasKey(true);
+                                        });
+                                    }, children: "Save Key" }), hasKey ? (_jsx("button", { type: "button", className: styles.iconBtn, onClick: () => void deleteProviderKey(provider).then(() => setHasKey(false)), children: "Clear" })) : null] })) : null, _jsxs("div", { children: [_jsx("div", { className: styles.sectionLabel, style: { padding: '4px 0 6px' }, children: "Recent local sessions" }), sessions.length === 0 ? (_jsx("p", { style: { margin: 0, fontSize: '12.5px', color: 'var(--content-muted)' }, children: "No saved sessions yet." })) : (_jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '6px' }, children: sessions.slice(0, 5).map((s) => (_jsxs("li", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }, children: [_jsxs("button", { type: "button", className: styles.iconBtn, style: { flex: 1, textAlign: 'left' }, onClick: () => {
+                                                    setActiveSession(s);
+                                                    setShowSettings(false);
+                                                }, children: [s.task, " (", s.status, ")"] }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => void handleDeleteSession(s.session_id), "aria-label": `Delete session ${s.task}`, children: "Delete" })] }, s.session_id))) }))] })] })) : null, !activeSession && !showSettings ? (_jsxs("div", { children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: '20px' }, children: [_jsx("div", { className: styles.sectionLabel, children: "Point me at a window" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
+                                        void listWindows().then((list) => {
+                                            setWindows(list);
+                                            if (!selectedScope && list[0])
+                                                setSelectedScope(list[0]);
+                                        });
+                                    }, children: "Refresh" })] }), windows.slice(0, 4).map((w) => {
+                            const selected = selectedScope?.scope_id === w.scope_id;
+                            return (_jsxs("button", { type: "button", className: `${styles.windowRow} ${selected ? styles.windowRowSelected : ''}`, onClick: () => setSelectedScope(w), children: [_jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [_jsx("div", { style: { fontSize: '14px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: w.window_title }), _jsxs("div", { style: { fontSize: '12px', color: 'var(--content-muted)' }, children: [w.app_name, " \u00B7 ", w.target_kind] })] }), _jsx("span", { style: { fontSize: '12px', fontWeight: 500, color: selected ? 'var(--status-safe)' : 'var(--content-muted)' }, children: selected ? 'In scope' : 'Select' })] }, w.scope_id));
+                        }), _jsx("div", { className: styles.sectionLabel, children: "Suggested for this window" }), SUGGESTED_TASKS.map((item) => (_jsxs("button", { type: "button", className: styles.suggestRow, onClick: () => {
+                                setTask(item.title);
+                                void handleStart(item.title);
+                            }, children: [_jsx("span", { style: { flex: 1, fontSize: '14px', fontWeight: 500 }, children: item.title }), _jsx("span", { className: styles.kbd, children: item.tag })] }, item.title)))] })) : null, activeSession ? (_jsxs("div", { className: styles.bodyPad, children: [pendingApproval ? (_jsx(ApprovalCard, { action: pendingApproval.action, consequence: pendingApproval.consequence, onApprove: () => void handleApprove(), onTakeOver: () => {
+                                setPendingApproval(null);
+                                setSecretReason('User takeover requested.');
+                            }, onReject: () => void handleReject() })) : null, secretReason ? (_jsx(SecretHandoff, { reason: secretReason, onContinue: () => void handleResumeAfterTakeover(), onStop: () => void handleStop() })) : null, activeSession.status === 'complete' ? (_jsx(ActionCard, { stepNumber: activeSession.steps.length, verb: "Verified", target: activeSession.scope.window_title, reason: "Task completed within approved scope.", expectedResult: "All steps verified", risk: "observe" })) : null, activeSession.steps.length > 0 ? (_jsxs("div", { children: [_jsx("div", { className: styles.sectionLabel, style: { padding: '4px 0' }, children: "What I just did" }), _jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0 }, children: activeSession.steps.map((step) => (_jsx(TimelineItem, { step: step }, step.step_number))) })] })) : null] })) : null, _jsxs("footer", { className: styles.footer, children: [_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "\u23CE" }), _jsx("span", { children: "Run" })] }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "Ctrl K" }), _jsx("span", { children: "Settings & History" })] }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "Esc" }), _jsx("span", { children: "Stop" })] }), _jsx("div", { style: { flex: 1 } }), _jsx("span", { children: "Only the selected window is observed." })] })] }) }));
 }

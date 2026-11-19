@@ -14,10 +14,13 @@
       {
         "label": "main",
         "title": "Snippy",
-        "width": 520,
-        "height": 760,
-        "minWidth": 420,
-        "minHeight": 560,
+        "width": 800,
+        "height": 680,
+        "minWidth": 520,
+        "minHeight": 420,
+        "decorations": false,
+        "transparent": true,
+        "center": true,
         "resizable": true
       },
       {

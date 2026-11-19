@@ -12,16 +12,10 @@ export function Overlay() {
   });
 
   useEffect(() => {
-    const win = window as unknown as {
-      __TAURI_INTERNALS__?: {
-        transformCallback?: unknown;
-      };
-    };
     const onMessage = (e: CustomEvent<OverlayPayload>) => {
       if (e.detail) setPayload(e.detail);
     };
     window.addEventListener('snippy-overlay-update', onMessage as EventListener);
-    void win;
     return () => {
       window.removeEventListener('snippy-overlay-update', onMessage as EventListener);
     };
@@ -33,26 +27,25 @@ export function Overlay() {
         width: '100vw',
         height: '100vh',
         boxSizing: 'border-box',
-        border: '3px solid var(--overlay-outline)',
-        borderRadius: 'var(--radius-sm)',
-        background: 'transparent',
+        border: '2px solid var(--status-safe-border)',
+        borderRadius: '10px',
+        background: 'rgba(15, 163, 127, 0.08)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'flex-start',
-        padding: '4px',
+        padding: '6px',
         pointerEvents: 'none',
       }}
     >
       <div
         style={{
-          background: 'var(--surface-canvas)',
-          color: 'var(--content-primary)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--radius-sm)',
-          padding: '2px 8px',
-          fontSize: '12px',
+          background: 'var(--ink-950)',
+          color: 'var(--text-100)',
+          borderRadius: '8px',
+          padding: '3px 10px',
+          fontSize: '11.5px',
           fontWeight: 600,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontFamily: 'var(--font-sans)',
         }}
       >
         #{payload.step_number} {payload.label}

@@ -1,19 +1,45 @@
 :root {
-  --slate-950: #0b1020;
-  --slate-900: #11182a;
-  --slate-800: #1c2840;
-  --slate-700: #30415f;
-  --slate-300: #b9c4d8;
-  --slate-100: #edf2fa;
-  --slate-50: #f8fafc;
-  --slate-900-text: #0f172a;
-  --slate-600-text: #475569;
+  /* Core inks & surfaces */
+  --ink-950: #14151a;
+  --ink-900: #1b1e27;
+  --ink-800: #252834;
+  --ink-glass: rgba(20, 21, 26, 0.97);
+
+  /* Light surfaces */
+  --paper-50: #faf9f5;
+  --paper-100: #ffffff;
+  --paper-200: #f0f2f6;
+  --paper-border: #bfc6d2;
+
+  /* Text */
+  --text-100: #f3f4f7;
+  --text-200: #e3e6ee;
+  --text-300: #c9cdd8;
+  --text-350: #a7acb8;
+  --text-400: #8b90a0;
+  --text-900: #1b1e27;
+  --text-600: #4a5060;
+
+  /* Semantic accents from ui.html */
+  --mint-300: #bff5e5;
+  --mint-400: #3ddbb0;
+  --mint-600: #0b8f6c;
+  --amber-200: #ffd08a;
+  --amber-300: #ffc76e;
+  --amber-400: #ffb84d;
+  --amber-700: #b7791f;
+  --violet-200: #cbbeff;
+  --violet-300: #b8a4ff;
+  --violet-700: #6b4fd6;
+  --coral-400: #ff7a7a;
+  --coral-950: #1a0b0b;
   --white: #ffffff;
-  --blue-500: #4c8dff;
-  --blue-600: #2f6fed;
-  --green-500: #28b487;
-  --amber-500: #e9a23b;
-  --red-500: #e05263;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Spacing & radii */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -21,8 +47,10 @@
   --space-5: 20px;
   --space-6: 24px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-md: 11px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
   --duration-fast: 150ms;
   --duration-normal: 200ms;
 }

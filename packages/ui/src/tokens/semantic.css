@@ -1,24 +1,40 @@
 :root {
-  --surface-canvas: var(--slate-950);
-  --surface-panel: var(--slate-900);
-  --surface-raised: var(--slate-800);
-  --content-primary: var(--white);
-  --content-secondary: var(--slate-300);
-  --border-subtle: var(--slate-700);
-  --action-primary: var(--blue-500);
-  --status-safe: var(--green-500);
-  --status-caution: var(--amber-500);
-  --status-danger: var(--red-500);
-  --focus-ring: var(--blue-500);
+  --surface-canvas: transparent;
+  --surface-bar: var(--ink-glass);
+  --surface-panel: var(--ink-950);
+  --surface-raised: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --content-primary: var(--text-100);
+  --content-secondary: var(--text-350);
+  --content-muted: var(--text-400);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --action-primary: var(--mint-400);
+  --status-safe: var(--mint-400);
+  --status-safe-border: var(--mint-600);
+  --status-caution: var(--amber-400);
+  --status-caution-text: var(--amber-300);
+  --status-secret: var(--violet-300);
+  --status-secret-border: var(--violet-700);
+  --status-danger: var(--coral-400);
+  --status-danger-ink: var(--coral-950);
+  --focus-ring: var(--mint-400);
+  --bar-shadow: 0 28px 80px rgba(8, 10, 16, 0.5);
 }
 
 [data-theme="light"] {
-  --surface-canvas: var(--slate-50);
-  --surface-panel: var(--white);
-  --surface-raised: var(--slate-100);
-  --content-primary: var(--slate-900-text);
-  --content-secondary: var(--slate-600-text);
-  --border-subtle: var(--slate-300);
-  --action-primary: var(--blue-600);
-  --focus-ring: var(--blue-600);
+  --surface-bar: rgba(255, 255, 255, 0.98);
+  --surface-panel: var(--paper-100);
+  --surface-raised: var(--paper-200);
+  --surface-hover: rgba(27, 30, 39, 0.05);
+  --content-primary: var(--text-900);
+  --content-secondary: var(--text-600);
+  --content-muted: var(--text-600);
+  --border-subtle: #e3e6ec;
+  --border-strong: var(--paper-border);
+  --action-primary: var(--mint-600);
+  --status-safe: var(--mint-600);
+  --status-caution-text: var(--amber-700);
+  --focus-ring: var(--mint-600);
+  --bar-shadow: 0 24px 64px rgba(30, 36, 50, 0.2);
 }
