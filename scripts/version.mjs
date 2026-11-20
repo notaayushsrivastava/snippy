@@ -5,25 +5,51 @@ import { execSync } from 'node:child_process';
 const root = process.cwd();
 const releasefilePath = path.join(root, 'Releasefile');
 
+function parseBool(val, fallback) {
+  if (val == null) return fallback;
+  const s = String(val).trim().toLowerCase();
+  if (s === 'true' || s === 'yes' || s === '1') return true;
+  if (s === 'false' || s === 'no' || s === '0') return false;
+  return fallback;
+}
+
 function parseReleasefile() {
   if (!fs.existsSync(releasefilePath)) {
-    return { declaredVersion: 'auto', notes: 'See the assets to download and install this version.' };
+    return {
+      declaredVersion: 'auto',
+      buildWin: true,
+      buildMac: false,
+      notes: 'See the assets to download and install this version.',
+    };
   }
   const raw = fs.readFileSync(releasefilePath, 'utf8').replace(/\r\n/g, '\n');
   const lines = raw.split('\n');
-  let declaredVersion = 'auto';
+  const headers = {};
   let bodyStart = 0;
 
-  if (lines[0]?.trim().toLowerCase().startsWith('version:')) {
-    declaredVersion = lines[0].split(':').slice(1).join(':').trim() || 'auto';
-    bodyStart = 1;
-    while (bodyStart < lines.length && lines[bodyStart].trim() === '') {
+  while (bodyStart < lines.length) {
+    const line = lines[bodyStart].trim();
+    if (!line) {
       bodyStart += 1;
+      break;
     }
+    const m = /^([a-zA-Z0-9_]+)\s*:\s*(.*)$/.exec(line);
+    if (!m) break;
+    headers[m[1].toLowerCase()] = m[2].trim();
+    bodyStart += 1;
+  }
+
+  while (bodyStart < lines.length && lines[bodyStart].trim() === '') {
+    bodyStart += 1;
   }
 
   const notes = lines.slice(bodyStart).join('\n').trim() || 'See the assets to download and install this version.';
-  return { declaredVersion, notes };
+  return {
+    declaredVersion: headers.version || 'auto',
+    buildWin: parseBool(headers.build_win, true),
+    buildMac: parseBool(headers.build_mac, false),
+    notes,
+  };
 }
 
 function parseSemver(v) {
@@ -112,26 +138,40 @@ function syncVersion(version) {
   tauriConf.version = version;
   fs.writeFileSync(tauriConfPath, `${JSON.stringify(tauriConf, null, 2)}\n`);
 
-  for (const pkgRel of ['package.json', 'apps/desktop/package.json']) {
+  for (const pkgRel of ['package.json', 'apps/desktop/package.json', 'apps/web/package.json']) {
     const pkgPath = path.join(root, pkgRel);
+    if (!fs.existsSync(pkgPath)) continue;
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     pkg.version = version;
     fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   }
 }
 
-const { declaredVersion, notes } = parseReleasefile();
+const { declaredVersion, buildWin, buildMac, notes } = parseReleasefile();
 const version = resolveVersion(declaredVersion);
 if (!process.argv.includes('--dry-run')) {
   syncVersion(version);
 }
 
+const matrix = [];
+if (buildWin) matrix.push({ platform: 'windows-latest', args: '' });
+if (buildMac) matrix.push({ platform: 'macos-latest', args: '--target universal-apple-darwin' });
+
 if (process.env.GITHUB_OUTPUT) {
   const delim = `SNIPPY_EOF_${Date.now()}`;
   fs.appendFileSync(
     process.env.GITHUB_OUTPUT,
-    `version=${version}\nnotes<<${delim}\n${notes}\n${delim}\n`,
+    [
+      `version=${version}`,
+      `build_win=${buildWin}`,
+      `build_mac=${buildMac}`,
+      `matrix=${JSON.stringify(matrix)}`,
+      `notes<<${delim}`,
+      notes,
+      delim,
+      '',
+    ].join('\n'),
   );
 }
 
-console.log(`Snippy release version: ${version}`);
+console.log(`Snippy release version: ${version} (build_win=${buildWin}, build_mac=${buildMac})`);
