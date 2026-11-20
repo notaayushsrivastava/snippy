@@ -58,6 +58,7 @@ jobs:
 
   publish-tauri:
     needs: prepare
+    if: ${{ needs.prepare.outputs.should_release == 'true' && (needs.prepare.outputs.build_win == 'true' || needs.prepare.outputs.build_mac == 'true') }}
     strategy:
       fail-fast: false
       matrix:
