@@ -6,6 +6,20 @@ on:
   pull_request:
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build_win: ${{ steps.meta.outputs.build_win }}
+      build_mac: ${{ steps.meta.outputs.build_mac }}
+      matrix: ${{ steps.meta.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - id: meta
+        run: node scripts/version.mjs --dry-run
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -17,15 +31,16 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm -r --if-present typecheck
       - run: corepack pnpm -r --if-present test
-      - run: corepack pnpm --filter @snippy/desktop build
+      - run: corepack pnpm -r --if-present build
 
   rust:
-    needs: frontend
+    needs: [prepare, frontend]
+    if: ${{ needs.prepare.outputs.build_win == 'true' || needs.prepare.outputs.build_mac == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

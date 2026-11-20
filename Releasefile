@@ -1,4 +1,6 @@
 version: 0.1.0
+build_win: true
+build_mac: false
 
 ## What's Changed
 - Office Harness for Excel, Word, and PowerPoint so Snippy edits documents directly without fragile coordinate clicks.
