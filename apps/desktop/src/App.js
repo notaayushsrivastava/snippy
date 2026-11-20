@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActionCard, ApprovalCard, ScopeChip, SecretHandoff, StopControl, TimelineItem, } from '@snippy/ui';
-import { approveAction, deleteProviderKey, deleteSession, hasProviderKey, listSessions, listWindows, rejectAction, setProviderKey, startAndStep, stepSession, stopTask, } from './ipc.js';
+import { approveAction, continueSession, deleteProviderKey, deleteSession, getDefaultProvider, hasProviderKey, hideOverlayHighlight, listSessions, listWindows, rejectAction, setProviderKey, startAndStep, stepSession, stopTask, } from './ipc.js';
 import styles from './App.module.css';
 const SUGGESTED_TASKS = [
     { title: 'Summarize what is visible in this window', tag: 'Observe' },
@@ -16,18 +16,28 @@ export function App() {
     const [activeSession, setActiveSession] = useState(null);
     const [pendingApproval, setPendingApproval] = useState(null);
     const [secretReason, setSecretReason] = useState(null);
+    const [blockedReason, setBlockedReason] = useState(null);
+    const [messages, setMessages] = useState([]);
+    const [isStepping, setIsStepping] = useState(false);
     const [task, setTask] = useState('');
+    const [followUp, setFollowUp] = useState('');
     const [provider, setProvider] = useState('demo');
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [hasKey, setHasKey] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
+    const stoppedRef = useRef(false);
     useEffect(() => {
         void (async () => {
-            const [winList, sessList] = await Promise.all([listWindows(), listSessions()]);
+            const [winList, sessList, defProvider] = await Promise.all([
+                listWindows(),
+                listSessions(),
+                getDefaultProvider(),
+            ]);
             setWindows(winList);
             setSelectedScope(winList[0] ?? null);
             setSessions(sessList);
+            setProvider(defProvider);
         })();
     }, []);
     useEffect(() => {
@@ -45,41 +55,81 @@ export function App() {
         if (outcome.outcome === 'awaiting_approval') {
             setPendingApproval({ action: outcome.action, consequence: outcome.consequence });
             setSecretReason(null);
+            setBlockedReason(null);
+            setMessages((prev) => [
+                ...prev,
+                { role: 'assistant', text: `Needs approval: ${outcome.action.reason} (${outcome.consequence})` },
+            ]);
         }
         else if (outcome.outcome === 'awaiting_secret') {
             setSecretReason(outcome.reason);
             setPendingApproval(null);
+            setBlockedReason(null);
+            setMessages((prev) => [...prev, { role: 'assistant', text: outcome.reason }]);
+        }
+        else if (outcome.outcome === 'blocked') {
+            setBlockedReason(outcome.reason);
+            setPendingApproval(null);
+            setSecretReason(null);
+            setMessages((prev) => [...prev, { role: 'assistant', text: `Stopped: ${outcome.reason}` }]);
+        }
+        else if (outcome.outcome === 'complete' || outcome.outcome === 'executed') {
+            setPendingApproval(null);
+            setSecretReason(null);
+            setBlockedReason(null);
+            if (outcome.summary) {
+                setMessages((prev) => [...prev, { role: 'assistant', text: outcome.summary }]);
+            }
         }
         else {
             setPendingApproval(null);
             setSecretReason(null);
+            setBlockedReason(null);
+        }
+    };
+    const runAutoLoop = async (initial) => {
+        let current = initial;
+        applyOutcome(current.session, current.outcome);
+        let steps = 0;
+        while (current.outcome.outcome === 'executed' &&
+            !stoppedRef.current &&
+            steps < 5) {
+            steps += 1;
+            current = await stepSession(current.session.session_id, provider);
+            if (stoppedRef.current)
+                break;
+            applyOutcome(current.session, current.outcome);
         }
     };
     const handleStart = async (overrideTask) => {
         const query = (overrideTask ?? task).trim();
         if (!query || !selectedScope)
             return;
+        stoppedRef.current = false;
+        setIsStepping(true);
         setErrorMsg(null);
         setShowSettings(false);
+        setMessages([{ role: 'user', text: query }]);
         try {
-            let res = await startAndStep(query, selectedScope, provider);
-            if (res.outcome.outcome === 'executed') {
-                res = await stepSession(res.session.session_id, provider);
-            }
-            applyOutcome(res.session, res.outcome);
+            const res = await startAndStep(query, selectedScope, provider);
+            await runAutoLoop(res);
             await refreshSessions();
         }
         catch (err) {
             setErrorMsg(String(err));
         }
+        finally {
+            setIsStepping(false);
+        }
     };
     const handleApprove = async () => {
         if (!activeSession || !pendingApproval)
             return;
+        stoppedRef.current = false;
         setErrorMsg(null);
         try {
             const res = await approveAction(activeSession.session_id, pendingApproval.action.action_id, provider);
-            applyOutcome(res.session, res.outcome);
+            await runAutoLoop(res);
             await refreshSessions();
         }
         catch (err) {
@@ -95,6 +145,7 @@ export function App() {
         await refreshSessions();
     };
     const handleStop = async () => {
+        stoppedRef.current = true;
         if (!activeSession)
             return;
         const updated = await stopTask(activeSession.session_id);
@@ -104,11 +155,36 @@ export function App() {
         await refreshSessions();
     };
     const handleReset = () => {
+        void hideOverlayHighlight();
         setActiveSession(null);
         setPendingApproval(null);
         setSecretReason(null);
+        setBlockedReason(null);
+        setMessages([]);
         setErrorMsg(null);
         setTask('');
+        setFollowUp('');
+    };
+    const handleFollowUp = async () => {
+        const query = followUp.trim();
+        if (!query || !activeSession)
+            return;
+        stoppedRef.current = false;
+        setIsStepping(true);
+        setErrorMsg(null);
+        setFollowUp('');
+        setMessages((prev) => [...prev, { role: 'user', text: query }]);
+        try {
+            const res = await continueSession(activeSession.session_id, query, provider);
+            await runAutoLoop(res);
+            await refreshSessions();
+        }
+        catch (err) {
+            setErrorMsg(String(err));
+        }
+        finally {
+            setIsStepping(false);
+        }
     };
     const handleDeleteSession = async (sessionId) => {
         await deleteSession(sessionId);
@@ -120,11 +196,12 @@ export function App() {
     const handleResumeAfterTakeover = async () => {
         if (!activeSession)
             return;
+        stoppedRef.current = false;
         setSecretReason(null);
         setErrorMsg(null);
         try {
             const res = await stepSession(activeSession.session_id, provider);
-            applyOutcome(res.session, res.outcome);
+            await runAutoLoop(res);
             await refreshSessions();
         }
         catch (err) {
@@ -167,16 +244,20 @@ export function App() {
     });
     const providerLabel = provider === 'demo'
         ? 'Demo · local mock'
-        : `${provider === 'openai' ? 'OpenAI' : 'Gemini'} · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
+        : `${provider === 'openai'
+            ? 'OpenAI'
+            : provider === 'gemini_live'
+                ? 'Gemini 3.8 Live (Video)'
+                : 'Gemini'} · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
     return (_jsx("div", { className: styles.shell, "data-theme": theme, children: _jsxs("main", { className: styles.bar, "aria-label": "Snippy Command Bar", children: [!activeSession ? (_jsxs(_Fragment, { children: [_jsxs("div", { className: styles.header, "data-tauri-drag-region": true, children: [_jsxs("svg", { width: "26", height: "26", viewBox: "0 0 28 28", fill: "none", stroke: "var(--status-safe)", strokeWidth: "2.2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [_jsx("path", { d: "M4 10V6a2 2 0 0 1 2-2h4M18 4h4a2 2 0 0 1 2 2v4M24 18v4a2 2 0 0 1-2 2h-4M10 24H6a2 2 0 0 1-2-2v-4" }), _jsx("circle", { cx: "14", cy: "14", r: "3", fill: "var(--status-safe)", stroke: "none" })] }), _jsx("input", { type: "text", className: styles.taskInput, value: task, onChange: (e) => setTask(e.target.value), onKeyDown: (e) => {
                                         if (e.key === 'Enter')
                                             void handleStart();
-                                    }, placeholder: "Tell Snippy what to do on your screen", "aria-label": "Task for Snippy" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => setShowSettings((s) => !s), "aria-expanded": showSettings, children: "Settings" }), _jsx("button", { type: "button", className: styles.iconBtn, style: {
+                                    }, placeholder: "Tell Snippy what to do on your screen", "aria-label": "Task for Snippy" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => setShowSettings((s) => !s), "aria-expanded": showSettings, children: "Settings" }), _jsx("button", { type: "button", className: styles.iconBtn, disabled: isStepping, style: {
                                         background: 'var(--action-primary)',
                                         color: '#0b1020',
                                         borderColor: 'transparent',
                                         fontWeight: 600,
-                                    }, onClick: () => void handleStart(), children: "Run \u23CE" })] }), _jsxs("div", { className: styles.pillsRow, children: [selectedScope ? _jsx(ScopeChip, { scope: selectedScope }) : null, _jsx("div", { className: styles.pillNeutral, children: "Ask before changes" }), _jsx("div", { style: { flex: 1 } }), _jsxs("div", { style: { display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: 'var(--content-muted)' }, children: [_jsx("span", { style: {
+                                    }, onClick: () => void handleStart(), children: isStepping ? 'Working…' : 'Run ⏎' })] }), _jsxs("div", { className: styles.pillsRow, children: [selectedScope ? _jsx(ScopeChip, { scope: selectedScope }) : null, _jsx("div", { className: styles.pillNeutral, children: "Ask before changes" }), _jsx("div", { style: { flex: 1 } }), _jsxs("div", { style: { display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: 'var(--content-muted)' }, children: [_jsx("span", { style: {
                                                 width: '7px',
                                                 height: '7px',
                                                 borderRadius: '50%',
@@ -200,14 +281,14 @@ export function App() {
                                         ? 'Waiting for your approval'
                                         : secretReason
                                             ? 'Your turn: enter sensitive details'
-                                            : activeSession.task }), _jsxs("div", { style: { fontSize: '12.5px', color: 'var(--content-muted)', lineHeight: '17px' }, children: [activeSession.scope.app_name, " \u00B7 ", activeSession.status, " \u00B7 ", activeSession.steps.length, " step(s)"] })] }), !isRunning ? (_jsx("button", { type: "button", className: styles.iconBtn, onClick: handleReset, children: "New task" })) : (_jsx(StopControl, { onStop: () => void handleStop() })), _jsx("div", { className: styles.progressTrack, children: _jsx("div", { className: styles.progressFill, style: {
+                                            : activeSession.task }), _jsxs("div", { style: { fontSize: '12.5px', color: 'var(--content-muted)', lineHeight: '17px' }, children: [activeSession.scope.app_name, " \u00B7 ", activeSession.status, " \u00B7 ", activeSession.steps.length, " step(s)"] })] }), !isRunning ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' }, children: [_jsx("button", { type: "button", className: styles.iconBtn, onClick: () => void hideOverlayHighlight(), children: "Clear drawings" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: handleReset, children: "\u2190 Back" })] })) : (_jsx(StopControl, { onStop: () => void handleStop() })), _jsx("div", { className: styles.progressTrack, children: _jsx("div", { className: styles.progressFill, style: {
                                     width: activeSession.status === 'complete' ? '100%' : '50%',
                                     background: pendingApproval
                                         ? 'var(--status-caution)'
                                         : secretReason
                                             ? 'var(--status-secret)'
                                             : 'var(--status-safe)',
-                                } }) })] })), errorMsg ? (_jsx("div", { className: styles.bodyPad, children: _jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '13px' }, children: errorMsg }) })) : null, showSettings ? (_jsxs("section", { className: styles.bodyPad, "aria-label": "Settings and History", children: [_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '13px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), className: styles.iconBtn, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "openai", children: "OpenAI" }), _jsx("option", { value: "gemini", children: "Gemini" })] }), _jsxs("button", { type: "button", className: styles.iconBtn, onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), children: ["Theme: ", theme] })] }), provider !== 'demo' ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' }, children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", className: styles.iconBtn, style: { flex: 1, textAlign: 'left', cursor: 'text' } }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
+                                } }) })] })), errorMsg ? (_jsx("div", { className: styles.bodyPad, children: _jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '13px' }, children: errorMsg }) })) : null, showSettings ? (_jsxs("section", { className: styles.bodyPad, "aria-label": "Settings and History", children: [_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '13px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), className: styles.iconBtn, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "gemini_live", children: "Gemini 3.8 Live (Video Stream)" }), _jsx("option", { value: "gemini", children: "Gemini 3.5 Flash-Lite" }), _jsx("option", { value: "openai", children: "OpenAI" })] }), _jsxs("button", { type: "button", className: styles.iconBtn, onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), children: ["Theme: ", theme] })] }), provider !== 'demo' ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' }, children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", className: styles.iconBtn, style: { flex: 1, textAlign: 'left', cursor: 'text' } }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
                                         if (!apiKeyInput.trim())
                                             return;
                                         void setProviderKey(provider, apiKeyInput).then(() => {
@@ -229,8 +310,46 @@ export function App() {
                         }), _jsx("div", { className: styles.sectionLabel, children: "Suggested for this window" }), SUGGESTED_TASKS.map((item) => (_jsxs("button", { type: "button", className: styles.suggestRow, onClick: () => {
                                 setTask(item.title);
                                 void handleStart(item.title);
-                            }, children: [_jsx("span", { style: { flex: 1, fontSize: '14px', fontWeight: 500 }, children: item.title }), _jsx("span", { className: styles.kbd, children: item.tag })] }, item.title)))] })) : null, activeSession ? (_jsxs("div", { className: styles.bodyPad, children: [pendingApproval ? (_jsx(ApprovalCard, { action: pendingApproval.action, consequence: pendingApproval.consequence, onApprove: () => void handleApprove(), onTakeOver: () => {
+                            }, children: [_jsx("span", { style: { flex: 1, fontSize: '14px', fontWeight: 500 }, children: item.title }), _jsx("span", { className: styles.kbd, children: item.tag })] }, item.title)))] })) : null, activeSession ? (_jsxs("div", { className: styles.bodyPad, children: [messages.length > 0 ? (_jsx("div", { "aria-label": "Conversation", style: {
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '8px',
+                                maxHeight: '220px',
+                                overflowY: 'auto',
+                            }, children: messages.map((m, idx) => (_jsx("div", { style: {
+                                    alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                                    maxWidth: '85%',
+                                    padding: '8px 12px',
+                                    borderRadius: '12px',
+                                    fontSize: '13.5px',
+                                    lineHeight: '19px',
+                                    background: m.role === 'user'
+                                        ? 'rgba(61, 219, 176, 0.14)'
+                                        : 'var(--surface-raised)',
+                                    border: m.role === 'user'
+                                        ? '1px solid rgba(61, 219, 176, 0.35)'
+                                        : '1px solid var(--border-subtle)',
+                                    color: 'var(--content-primary)',
+                                    whiteSpace: 'pre-wrap',
+                                }, children: m.text }, idx))) })) : null, pendingApproval ? (_jsx(ApprovalCard, { action: pendingApproval.action, consequence: pendingApproval.consequence, onApprove: () => void handleApprove(), onTakeOver: () => {
                                 setPendingApproval(null);
                                 setSecretReason('User takeover requested.');
-                            }, onReject: () => void handleReject() })) : null, secretReason ? (_jsx(SecretHandoff, { reason: secretReason, onContinue: () => void handleResumeAfterTakeover(), onStop: () => void handleStop() })) : null, activeSession.status === 'complete' ? (_jsx(ActionCard, { stepNumber: activeSession.steps.length, verb: "Verified", target: activeSession.scope.window_title, reason: "Task completed within approved scope.", expectedResult: "All steps verified", risk: "observe" })) : null, activeSession.steps.length > 0 ? (_jsxs("div", { children: [_jsx("div", { className: styles.sectionLabel, style: { padding: '4px 0' }, children: "What I just did" }), _jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0 }, children: activeSession.steps.map((step) => (_jsx(TimelineItem, { step: step }, step.step_number))) })] })) : null] })) : null, _jsxs("footer", { className: styles.footer, children: [_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "\u23CE" }), _jsx("span", { children: "Run" })] }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "Ctrl K" }), _jsx("span", { children: "Settings & History" })] }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "Esc" }), _jsx("span", { children: "Stop" })] }), _jsx("div", { style: { flex: 1 } }), _jsx("span", { children: "Only the selected window is observed." })] })] }) }));
+                            }, onReject: () => void handleReject() })) : null, secretReason ? (_jsx(SecretHandoff, { reason: secretReason, onContinue: () => void handleResumeAfterTakeover(), onStop: () => void handleStop() })) : null, blockedReason ? (_jsxs("div", { role: "alert", style: {
+                                padding: 'var(--space-3) var(--space-4)',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid var(--status-danger)',
+                                background: 'rgba(255, 122, 122, 0.1)',
+                                color: 'var(--content-primary)',
+                                fontSize: '13.5px',
+                            }, children: [_jsx("strong", { children: "Stopped safely:" }), " ", blockedReason] })) : null, activeSession.status === 'complete' ? (_jsx(ActionCard, { stepNumber: activeSession.steps.length, verb: "Verified", target: activeSession.scope.window_title, reason: "Task completed within approved scope.", expectedResult: "All steps verified", risk: "observe" })) : null, !isRunning && !pendingApproval && !secretReason ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }, children: [_jsx("input", { type: "text", value: followUp, onChange: (e) => setFollowUp(e.target.value), onKeyDown: (e) => {
+                                        if (e.key === 'Enter')
+                                            void handleFollowUp();
+                                    }, placeholder: "Reply to Snippy or ask for the next step...", "aria-label": "Follow-up message", className: styles.iconBtn, style: { flex: 1, textAlign: 'left', cursor: 'text', height: '36px', padding: '0 12px' } }), _jsx("button", { type: "button", className: styles.iconBtn, disabled: isStepping, style: {
+                                        background: 'var(--action-primary)',
+                                        color: '#0b1020',
+                                        borderColor: 'transparent',
+                                        fontWeight: 600,
+                                        height: '36px',
+                                        padding: '0 14px',
+                                    }, onClick: () => void handleFollowUp(), children: isStepping ? 'Working…' : 'Send ⏎' })] })) : null, activeSession.steps.length > 0 ? (_jsxs("div", { children: [_jsx("div", { className: styles.sectionLabel, style: { padding: '4px 0' }, children: "What I just did" }), _jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0 }, children: activeSession.steps.map((step) => (_jsx(TimelineItem, { step: step }, step.step_number))) })] })) : null] })) : null, _jsxs("footer", { className: styles.footer, children: [_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "\u23CE" }), _jsx("span", { children: "Run" })] }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "Ctrl K" }), _jsx("span", { children: "Settings & History" })] }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [_jsx("span", { className: styles.kbd, children: "Esc" }), _jsx("span", { children: "Stop" })] }), _jsx("div", { style: { flex: 1 } }), _jsx("span", { children: "Only the selected window is observed." })] })] }) }));
 }

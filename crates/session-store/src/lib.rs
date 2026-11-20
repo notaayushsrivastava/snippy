@@ -66,6 +66,7 @@ pub trait SessionStore: Send + Sync {
     async fn get_session(&self, session_id: &str) -> Result<SessionRecord, StoreError>;
     async fn list_sessions(&self) -> Result<Vec<SessionRecord>, StoreError>;
     async fn update_status(&self, session_id: &str, status: SessionStatus) -> Result<(), StoreError>;
+    async fn update_task(&self, session_id: &str, task: String) -> Result<(), StoreError>;
     async fn append_step(&self, session_id: &str, step: TimelineStep) -> Result<(), StoreError>;
     async fn delete_session(&self, session_id: &str) -> Result<(), StoreError>;
 }
@@ -120,6 +121,16 @@ impl SessionStore for InMemorySessionStore {
             .get_mut(session_id)
             .ok_or_else(|| StoreError::NotFound(session_id.to_string()))?;
         session.status = status;
+        session.updated_at = Utc::now();
+        Ok(())
+    }
+
+    async fn update_task(&self, session_id: &str, task: String) -> Result<(), StoreError> {
+        let mut guard = self.sessions.write().await;
+        let session = guard
+            .get_mut(session_id)
+            .ok_or_else(|| StoreError::NotFound(session_id.to_string()))?;
+        session.task = task;
         session.updated_at = Utc::now();
         Ok(())
     }
@@ -303,6 +314,14 @@ impl SessionStore for SqliteSessionStore {
         let conn = self.conn.lock().unwrap();
         let mut record = self.load_record(&conn, session_id)?;
         record.status = status;
+        record.updated_at = Utc::now();
+        self.save_record(&conn, &record)
+    }
+
+    async fn update_task(&self, session_id: &str, task: String) -> Result<(), StoreError> {
+        let conn = self.conn.lock().unwrap();
+        let mut record = self.load_record(&conn, session_id)?;
+        record.task = task;
         record.updated_at = Utc::now();
         self.save_record(&conn, &record)
     }

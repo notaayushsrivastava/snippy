@@ -95,6 +95,7 @@ mod tests {
                 reason: "Focus search".into(),
                 expected_postcondition: "Search button has focus".into(),
             }],
+            annotations: Vec::new(),
         })]));
         let store = Arc::new(InMemorySessionStore::new());
         let session = store
@@ -155,6 +156,7 @@ mod tests {
                 reason: "Submit".into(),
                 expected_postcondition: "Form submitted".into(),
             }],
+            annotations: Vec::new(),
         })]));
         let store = Arc::new(InMemorySessionStore::new());
         let session = store.create_session("Submit".into(), scope).await.unwrap();
@@ -212,6 +214,7 @@ mod tests {
                 reason: "Click".into(),
                 expected_postcondition: "Clicked".into(),
             }],
+            annotations: Vec::new(),
         })]));
         let store = Arc::new(InMemorySessionStore::new());
         let session = store.create_session("Click".into(), scope).await.unwrap();
@@ -251,6 +254,7 @@ mod tests {
                 reason: "Focus".into(),
                 expected_postcondition: "Focused".into(),
             }],
+            annotations: Vec::new(),
         })]));
         let store = Arc::new(InMemorySessionStore::new());
         let session = store.create_session("Focus".into(), scope).await.unwrap();

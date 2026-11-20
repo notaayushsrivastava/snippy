@@ -59,7 +59,13 @@ export async function deleteSession(sessionId: string): Promise<void> {
   memorySessions = memorySessions.filter((s) => s.session_id !== sessionId);
 }
 
-export type ProviderKind = 'demo' | 'openai' | 'gemini';
+export type ProviderKind = 'demo' | 'openai' | 'gemini' | 'gemini_live';
+
+export async function getDefaultProvider(): Promise<ProviderKind> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<ProviderKind>('get_default_provider');
+  return 'demo';
+}
 
 export async function setProviderKey(provider: ProviderKind, apiKey: string): Promise<void> {
   const tauri = getTauri();
@@ -127,6 +133,27 @@ export async function startAndStep(
   return {
     session,
     outcome: { outcome: 'awaiting_approval', action, consequence: action.expected_postcondition },
+  };
+}
+
+export async function continueSession(
+  sessionId: string,
+  followUp: string,
+  provider: ProviderKind = 'demo',
+): Promise<StepResponse> {
+  const tauri = getTauri();
+  if (tauri) {
+    return tauri.invoke<StepResponse>('continue_session', {
+      sessionId,
+      followUp,
+      provider,
+    });
+  }
+  const existing = memorySessions.find((s) => s.session_id === sessionId);
+  if (!existing) throw new Error('Session not found');
+  return {
+    session: { ...existing, task: followUp, status: 'complete' },
+    outcome: { outcome: 'complete', summary: `Follow-up completed: ${followUp}` },
   };
 }
 

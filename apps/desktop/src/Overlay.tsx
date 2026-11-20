@@ -5,21 +5,186 @@ interface OverlayPayload {
   step_number: number;
 }
 
+export interface ScreenAnnotation {
+  kind: string;
+  x: number;
+  y: number;
+  width?: number | null;
+  height?: number | null;
+  x2?: number | null;
+  y2?: number | null;
+  text?: string | null;
+  color?: string | null;
+}
+
 export function Overlay() {
-  const [payload, setPayload] = useState<OverlayPayload>({
-    label: 'Snippy target',
-    step_number: 1,
-  });
+  const [payload, setPayload] = useState<OverlayPayload | null>(null);
+  const [annotations, setAnnotations] = useState<ScreenAnnotation[]>([]);
 
   useEffect(() => {
-    const onMessage = (e: CustomEvent<OverlayPayload>) => {
-      if (e.detail) setPayload(e.detail);
+    const onHighlight = (e: CustomEvent<OverlayPayload>) => {
+      if (e.detail) {
+        setPayload(e.detail);
+        setAnnotations([]);
+      }
     };
-    window.addEventListener('snippy-overlay-update', onMessage as EventListener);
+    const onDraw = (e: CustomEvent<ScreenAnnotation[]>) => {
+      if (Array.isArray(e.detail)) {
+        setAnnotations(e.detail);
+        setPayload(null);
+      }
+    };
+    window.addEventListener('snippy-overlay-update', onHighlight as EventListener);
+    window.addEventListener('snippy-overlay-draw', onDraw as EventListener);
     return () => {
-      window.removeEventListener('snippy-overlay-update', onMessage as EventListener);
+      window.removeEventListener('snippy-overlay-update', onHighlight as EventListener);
+      window.removeEventListener('snippy-overlay-draw', onDraw as EventListener);
     };
   }, []);
+
+  if (annotations.length > 0) {
+    return (
+      <svg
+        width="100vw"
+        height="100vh"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          width: '100vw',
+          height: '100vh',
+          pointerEvents: 'none',
+          background: 'transparent',
+        }}
+      >
+        <defs>
+          <marker
+            id="snippy-arrowhead"
+            markerWidth="10"
+            markerHeight="10"
+            refX="8"
+            refY="3"
+            orient="auto"
+          >
+            <path d="M0,0 L0,6 L9,3 z" fill="#3DDBB0" />
+          </marker>
+        </defs>
+        {annotations.map((ann, idx) => {
+          const stroke = ann.color ?? '#3DDBB0';
+          if (ann.kind === 'circle') {
+            const r = Math.max(18, (ann.width ?? 60) / 2);
+            return (
+              <g key={idx}>
+                <circle
+                  cx={ann.x}
+                  cy={ann.y}
+                  r={r}
+                  fill="rgba(61, 219, 176, 0.1)"
+                  stroke={stroke}
+                  strokeWidth="3"
+                />
+                {ann.text ? (
+                  <text
+                    x={ann.x}
+                    y={ann.y - r - 8}
+                    fill="#F3F4F7"
+                    fontSize="12"
+                    fontWeight="600"
+                    fontFamily="Inter, system-ui, sans-serif"
+                  >
+                    {ann.text}
+                  </text>
+                ) : null}
+              </g>
+            );
+          }
+          if (ann.kind === 'arrow' && ann.x2 != null && ann.y2 != null) {
+            return (
+              <g key={idx}>
+                <line
+                  x1={ann.x}
+                  y1={ann.y}
+                  x2={ann.x2}
+                  y2={ann.y2}
+                  stroke={stroke}
+                  strokeWidth="3"
+                  strokeDasharray="8 6"
+                  strokeLinecap="round"
+                  markerEnd="url(#snippy-arrowhead)"
+                />
+                {ann.text ? (
+                  <text
+                    x={ann.x}
+                    y={ann.y - 8}
+                    fill="#F3F4F7"
+                    fontSize="12"
+                    fontWeight="600"
+                    fontFamily="Inter, system-ui, sans-serif"
+                  >
+                    {ann.text}
+                  </text>
+                ) : null}
+              </g>
+            );
+          }
+          if (ann.kind === 'label') {
+            return (
+              <g key={idx} transform={`translate(${ann.x}, ${ann.y})`}>
+                <rect
+                  x="0"
+                  y="0"
+                  width={Math.max(90, (ann.text?.length ?? 6) * 8 + 20)}
+                  height="28"
+                  rx="8"
+                  fill="#14151A"
+                  stroke={stroke}
+                  strokeWidth="1.5"
+                />
+                <text
+                  x="10"
+                  y="18"
+                  fill="#F3F4F7"
+                  fontSize="12"
+                  fontWeight="600"
+                  fontFamily="Inter, system-ui, sans-serif"
+                >
+                  {ann.text ?? 'Snippy'}
+                </text>
+              </g>
+            );
+          }
+          const w = Math.max(40, ann.width ?? 160);
+          const h = Math.max(28, ann.height ?? 44);
+          return (
+            <g key={idx}>
+              <rect
+                x={ann.x}
+                y={ann.y}
+                width={w}
+                height={h}
+                rx="8"
+                fill="rgba(15, 163, 127, 0.08)"
+                stroke={stroke}
+                strokeWidth="2.5"
+                strokeDasharray="6 4"
+              />
+              {ann.text ? (
+                <text
+                  x={ann.x + 6}
+                  y={Math.max(16, ann.y - 6)}
+                  fill="#F3F4F7"
+                  fontSize="12"
+                  fontWeight="600"
+                  fontFamily="Inter, system-ui, sans-serif"
+                >
+                  {ann.text}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+    );
+  }
 
   return (
     <div
@@ -48,7 +213,7 @@ export function Overlay() {
           fontFamily: 'var(--font-sans)',
         }}
       >
-        #{payload.step_number} {payload.label}
+        #{payload?.step_number ?? 1} {payload?.label ?? 'Snippy target'}
       </div>
     </div>
   );

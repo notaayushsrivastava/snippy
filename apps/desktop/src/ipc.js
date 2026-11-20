@@ -37,6 +37,12 @@ export async function deleteSession(sessionId) {
         return tauri.invoke('delete_session', { sessionId });
     memorySessions = memorySessions.filter((s) => s.session_id !== sessionId);
 }
+export async function getDefaultProvider() {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('get_default_provider');
+    return 'demo';
+}
 export async function setProviderKey(provider, apiKey) {
     const tauri = getTauri();
     if (tauri)
@@ -99,6 +105,23 @@ export async function startAndStep(task, scope, provider = 'demo') {
     return {
         session,
         outcome: { outcome: 'awaiting_approval', action, consequence: action.expected_postcondition },
+    };
+}
+export async function continueSession(sessionId, followUp, provider = 'demo') {
+    const tauri = getTauri();
+    if (tauri) {
+        return tauri.invoke('continue_session', {
+            sessionId,
+            followUp,
+            provider,
+        });
+    }
+    const existing = memorySessions.find((s) => s.session_id === sessionId);
+    if (!existing)
+        throw new Error('Session not found');
+    return {
+        session: { ...existing, task: followUp, status: 'complete' },
+        outcome: { outcome: 'complete', summary: `Follow-up completed: ${followUp}` },
     };
 }
 export async function stepSession(sessionId, provider = 'demo') {

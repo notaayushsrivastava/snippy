@@ -25,10 +25,32 @@ pub struct ProposedAction {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ScreenAnnotation {
+    pub kind: String,
+    pub x: i32,
+    pub y: i32,
+    #[serde(default)]
+    pub width: Option<i32>,
+    #[serde(default)]
+    pub height: Option<i32>,
+    #[serde(default)]
+    pub x2: Option<i32>,
+    #[serde(default)]
+    pub y2: Option<i32>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentProposal {
     pub status: ProposalStatus,
     pub user_message: String,
     pub actions: Vec<ProposedAction>,
+    #[serde(default)]
+    pub annotations: Vec<ScreenAnnotation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,8 +133,11 @@ pub fn validate_proposal(
                     "coordinate_hint out of safe bounds".into(),
                 ));
             }
-            // Reject coordinate-only actions when a stable semantic locator is available in the observation
-            if action.target.semantic_locator.is_none() && !observation.semantic_elements.is_empty()
+            // Reject coordinate-only pointer actions when semantic elements are available in single-window mode
+            if action.kind == ActionKind::Pointer
+                && action.target.semantic_locator.is_none()
+                && !observation.semantic_elements.is_empty()
+                && observation.scope.scope_id != "desktop:all"
             {
                 return Err(ProviderError::InvalidProposal(
                     "coordinate-only action rejected when semantic elements are available".into(),

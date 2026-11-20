@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApprovedAction, Scope, SessionRecord } from '@snippy/protocol';
 import {
   ActionCard,
@@ -10,9 +10,12 @@ import {
 } from '@snippy/ui';
 import {
   approveAction,
+  continueSession,
   deleteProviderKey,
   deleteSession,
+  getDefaultProvider,
   hasProviderKey,
+  hideOverlayHighlight,
   listSessions,
   listWindows,
   rejectAction,
@@ -21,6 +24,7 @@ import {
   stepSession,
   stopTask,
   type ProviderKind,
+  type StepResponse,
 } from './ipc.js';
 import styles from './App.module.css';
 
@@ -41,19 +45,29 @@ export function App() {
     consequence: string;
   } | null>(null);
   const [secretReason, setSecretReason] = useState<string | null>(null);
+  const [blockedReason, setBlockedReason] = useState<string | null>(null);
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [isStepping, setIsStepping] = useState(false);
   const [task, setTask] = useState('');
+  const [followUp, setFollowUp] = useState('');
   const [provider, setProvider] = useState<ProviderKind>('demo');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const stoppedRef = useRef(false);
 
   useEffect(() => {
     void (async () => {
-      const [winList, sessList] = await Promise.all([listWindows(), listSessions()]);
+      const [winList, sessList, defProvider] = await Promise.all([
+        listWindows(),
+        listSessions(),
+        getDefaultProvider(),
+      ]);
       setWindows(winList);
       setSelectedScope(winList[0] ?? null);
       setSessions(sessList);
+      setProvider(defProvider);
     })();
   }, []);
 
@@ -77,34 +91,73 @@ export function App() {
     if (outcome.outcome === 'awaiting_approval') {
       setPendingApproval({ action: outcome.action, consequence: outcome.consequence });
       setSecretReason(null);
+      setBlockedReason(null);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `Needs approval: ${outcome.action.reason} (${outcome.consequence})` },
+      ]);
     } else if (outcome.outcome === 'awaiting_secret') {
       setSecretReason(outcome.reason);
       setPendingApproval(null);
+      setBlockedReason(null);
+      setMessages((prev) => [...prev, { role: 'assistant', text: outcome.reason }]);
+    } else if (outcome.outcome === 'blocked') {
+      setBlockedReason(outcome.reason);
+      setPendingApproval(null);
+      setSecretReason(null);
+      setMessages((prev) => [...prev, { role: 'assistant', text: `Stopped: ${outcome.reason}` }]);
+    } else if (outcome.outcome === 'complete' || outcome.outcome === 'executed') {
+      setPendingApproval(null);
+      setSecretReason(null);
+      setBlockedReason(null);
+      if (outcome.summary) {
+        setMessages((prev) => [...prev, { role: 'assistant', text: outcome.summary }]);
+      }
     } else {
       setPendingApproval(null);
       setSecretReason(null);
+      setBlockedReason(null);
+    }
+  };
+
+  const runAutoLoop = async (initial: StepResponse) => {
+    let current = initial;
+    applyOutcome(current.session, current.outcome);
+    let steps = 0;
+    while (
+      current.outcome.outcome === 'executed' &&
+      !stoppedRef.current &&
+      steps < 5
+    ) {
+      steps += 1;
+      current = await stepSession(current.session.session_id, provider);
+      if (stoppedRef.current) break;
+      applyOutcome(current.session, current.outcome);
     }
   };
 
   const handleStart = async (overrideTask?: string) => {
     const query = (overrideTask ?? task).trim();
     if (!query || !selectedScope) return;
+    stoppedRef.current = false;
+    setIsStepping(true);
     setErrorMsg(null);
     setShowSettings(false);
+    setMessages([{ role: 'user', text: query }]);
     try {
-      let res = await startAndStep(query, selectedScope, provider);
-      if (res.outcome.outcome === 'executed') {
-        res = await stepSession(res.session.session_id, provider);
-      }
-      applyOutcome(res.session, res.outcome);
+      const res = await startAndStep(query, selectedScope, provider);
+      await runAutoLoop(res);
       await refreshSessions();
     } catch (err) {
       setErrorMsg(String(err));
+    } finally {
+      setIsStepping(false);
     }
   };
 
   const handleApprove = async () => {
     if (!activeSession || !pendingApproval) return;
+    stoppedRef.current = false;
     setErrorMsg(null);
     try {
       const res = await approveAction(
@@ -112,7 +165,7 @@ export function App() {
         pendingApproval.action.action_id,
         provider,
       );
-      applyOutcome(res.session, res.outcome);
+      await runAutoLoop(res);
       await refreshSessions();
     } catch (err) {
       setErrorMsg(String(err));
@@ -128,6 +181,7 @@ export function App() {
   };
 
   const handleStop = async () => {
+    stoppedRef.current = true;
     if (!activeSession) return;
     const updated = await stopTask(activeSession.session_id);
     setActiveSession(updated);
@@ -137,11 +191,34 @@ export function App() {
   };
 
   const handleReset = () => {
+    void hideOverlayHighlight();
     setActiveSession(null);
     setPendingApproval(null);
     setSecretReason(null);
+    setBlockedReason(null);
+    setMessages([]);
     setErrorMsg(null);
     setTask('');
+    setFollowUp('');
+  };
+
+  const handleFollowUp = async () => {
+    const query = followUp.trim();
+    if (!query || !activeSession) return;
+    stoppedRef.current = false;
+    setIsStepping(true);
+    setErrorMsg(null);
+    setFollowUp('');
+    setMessages((prev) => [...prev, { role: 'user', text: query }]);
+    try {
+      const res = await continueSession(activeSession.session_id, query, provider);
+      await runAutoLoop(res);
+      await refreshSessions();
+    } catch (err) {
+      setErrorMsg(String(err));
+    } finally {
+      setIsStepping(false);
+    }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -154,11 +231,12 @@ export function App() {
 
   const handleResumeAfterTakeover = async () => {
     if (!activeSession) return;
+    stoppedRef.current = false;
     setSecretReason(null);
     setErrorMsg(null);
     try {
       const res = await stepSession(activeSession.session_id, provider);
-      applyOutcome(res.session, res.outcome);
+      await runAutoLoop(res);
       await refreshSessions();
     } catch (err) {
       setErrorMsg(String(err));
@@ -200,7 +278,13 @@ export function App() {
   const providerLabel =
     provider === 'demo'
       ? 'Demo · local mock'
-      : `${provider === 'openai' ? 'OpenAI' : 'Gemini'} · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
+      : `${
+          provider === 'openai'
+            ? 'OpenAI'
+            : provider === 'gemini_live'
+              ? 'Gemini 3.8 Live (Video)'
+              : 'Gemini'
+        } · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
 
   return (
     <div className={styles.shell} data-theme={theme}>
@@ -244,6 +328,7 @@ export function App() {
               <button
                 type="button"
                 className={styles.iconBtn}
+                disabled={isStepping}
                 style={{
                   background: 'var(--action-primary)',
                   color: '#0b1020',
@@ -252,7 +337,7 @@ export function App() {
                 }}
                 onClick={() => void handleStart()}
               >
-                Run ⏎
+                {isStepping ? 'Working…' : 'Run ⏎'}
               </button>
             </div>
 
@@ -321,9 +406,18 @@ export function App() {
             </div>
 
             {!isRunning ? (
-              <button type="button" className={styles.iconBtn} onClick={handleReset}>
-                New task
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className={styles.iconBtn}
+                  onClick={() => void hideOverlayHighlight()}
+                >
+                  Clear drawings
+                </button>
+                <button type="button" className={styles.iconBtn} onClick={handleReset}>
+                  ← Back
+                </button>
+              </div>
             ) : (
               <StopControl onStop={() => void handleStop()} />
             )}
@@ -365,8 +459,9 @@ export function App() {
                 className={styles.iconBtn}
               >
                 <option value="demo">Demo (Local Mock)</option>
+                <option value="gemini_live">Gemini 3.8 Live (Video Stream)</option>
+                <option value="gemini">Gemini 3.5 Flash-Lite</option>
                 <option value="openai">OpenAI</option>
-                <option value="gemini">Gemini</option>
               </select>
               <button
                 type="button"
@@ -516,6 +611,45 @@ export function App() {
 
         {activeSession ? (
           <div className={styles.bodyPad}>
+            {messages.length > 0 ? (
+              <div
+                aria-label="Conversation"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                }}
+              >
+                {messages.map((m, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                      maxWidth: '85%',
+                      padding: '8px 12px',
+                      borderRadius: '12px',
+                      fontSize: '13.5px',
+                      lineHeight: '19px',
+                      background:
+                        m.role === 'user'
+                          ? 'rgba(61, 219, 176, 0.14)'
+                          : 'var(--surface-raised)',
+                      border:
+                        m.role === 'user'
+                          ? '1px solid rgba(61, 219, 176, 0.35)'
+                          : '1px solid var(--border-subtle)',
+                      color: 'var(--content-primary)',
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {m.text}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             {pendingApproval ? (
               <ApprovalCard
                 action={pendingApproval.action}
@@ -537,6 +671,22 @@ export function App() {
               />
             ) : null}
 
+            {blockedReason ? (
+              <div
+                role="alert"
+                style={{
+                  padding: 'var(--space-3) var(--space-4)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--status-danger)',
+                  background: 'rgba(255, 122, 122, 0.1)',
+                  color: 'var(--content-primary)',
+                  fontSize: '13.5px',
+                }}
+              >
+                <strong>Stopped safely:</strong> {blockedReason}
+              </div>
+            ) : null}
+
             {activeSession.status === 'complete' ? (
               <ActionCard
                 stepNumber={activeSession.steps.length}
@@ -546,6 +696,39 @@ export function App() {
                 expectedResult="All steps verified"
                 risk="observe"
               />
+            ) : null}
+
+            {!isRunning && !pendingApproval && !secretReason ? (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                <input
+                  type="text"
+                  value={followUp}
+                  onChange={(e) => setFollowUp(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleFollowUp();
+                  }}
+                  placeholder="Reply to Snippy or ask for the next step..."
+                  aria-label="Follow-up message"
+                  className={styles.iconBtn}
+                  style={{ flex: 1, textAlign: 'left', cursor: 'text', height: '36px', padding: '0 12px' }}
+                />
+                <button
+                  type="button"
+                  className={styles.iconBtn}
+                  disabled={isStepping}
+                  style={{
+                    background: 'var(--action-primary)',
+                    color: '#0b1020',
+                    borderColor: 'transparent',
+                    fontWeight: 600,
+                    height: '36px',
+                    padding: '0 14px',
+                  }}
+                  onClick={() => void handleFollowUp()}
+                >
+                  {isStepping ? 'Working…' : 'Send ⏎'}
+                </button>
+              </div>
             ) : null}
 
             {activeSession.steps.length > 0 ? (

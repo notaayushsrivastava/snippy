@@ -15,7 +15,11 @@ mod win_impl {
     use super::*;
     use std::ffi::c_void;
     use std::ptr;
-    use windows::Win32::Foundation::{BOOL, ERROR_NOT_FOUND, HWND, LPARAM};
+    use windows::Win32::Foundation::{BOOL, ERROR_NOT_FOUND, HWND, LPARAM, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
+        DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SRCCOPY, SelectObject,
+    };
     use windows::Win32::Security::Credentials::{
         CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree,
         CredReadW, CredWriteW,
@@ -25,12 +29,19 @@ mod win_impl {
     };
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-        IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_InvokePatternId,
-        UIA_ValuePatternId,
+        IUIAutomationTreeWalker, IUIAutomationValuePattern, TreeScope_Descendants,
+        UIA_InvokePatternId, UIA_ValuePatternId,
+    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
+        KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEEVENTF_MOVE, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_BACK,
+        VK_CONTROL, VK_ESCAPE, VK_RETURN, VK_TAB,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible,
+        BringWindowToTop, EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+        GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        SM_CXSCREEN, SM_CYSCREEN, SW_RESTORE, SetForegroundWindow, ShowWindow,
     };
     use windows::core::{BSTR, Interface, PCWSTR, PWSTR};
 
@@ -106,6 +117,22 @@ mod win_impl {
             return BOOL(1);
         }
         let title = String::from_utf16_lossy(&buf[..read as usize]);
+        if matches!(
+            title.as_str(),
+            "Snippy"
+                | "Snippy Overlay"
+                | "Program Manager"
+                | "Windows Input Experience"
+                | "Microsoft Text Input Application"
+        ) {
+            return BOOL(1);
+        }
+        let mut rect = RECT::default();
+        if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok()
+            && ((rect.right - rect.left) < 50 || (rect.bottom - rect.top) < 50)
+        {
+            return BOOL(1);
+        }
         let mut pid: u32 = 0;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
 
@@ -120,11 +147,140 @@ mod win_impl {
         BOOL(1)
     }
 
+    pub fn capture_screen_jpeg(scope_id: &str) -> Result<String, PlatformError> {
+        use base64::Engine as _;
+        use image::codecs::jpeg::JpegEncoder;
+
+        let (x, y, w, h) = if scope_id.starts_with("hwnd:") {
+            let hwnd = parse_hwnd(scope_id)?;
+            let mut rect = RECT::default();
+            if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok()
+                && rect.right > rect.left
+                && rect.bottom > rect.top
+            {
+                (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+            } else {
+                (
+                    0,
+                    0,
+                    unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1),
+                    unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1),
+                )
+            }
+        } else {
+            (
+                0,
+                0,
+                unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1),
+                unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1),
+            )
+        };
+
+        let hdc_screen = unsafe { GetDC(None) };
+        let hdc_mem = unsafe { CreateCompatibleDC(hdc_screen) };
+        let hbm = unsafe { CreateCompatibleBitmap(hdc_screen, w, h) };
+        let old = unsafe { SelectObject(hdc_mem, hbm) };
+
+        let ok = unsafe { BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY) }.is_ok();
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bgra = vec![0u8; (w as usize) * (h as usize) * 4];
+        if ok {
+            unsafe {
+                GetDIBits(
+                    hdc_mem,
+                    hbm,
+                    0,
+                    h as u32,
+                    Some(bgra.as_mut_ptr() as *mut c_void),
+                    &mut bmi,
+                    DIB_RGB_COLORS,
+                )
+            };
+        }
+
+        unsafe {
+            SelectObject(hdc_mem, old);
+            let _ = DeleteObject(hbm);
+            let _ = DeleteDC(hdc_mem);
+            ReleaseDC(None, hdc_screen);
+        }
+
+        if !ok {
+            return Err(PlatformError::UnsupportedControl("BitBlt capture failed".into()));
+        }
+
+        let mut rgb = Vec::with_capacity((w as usize) * (h as usize) * 3);
+        for px in bgra.as_chunks::<4>().0 {
+            rgb.push(px[2]);
+            rgb.push(px[1]);
+            rgb.push(px[0]);
+        }
+
+        let img = image::RgbImage::from_raw(w as u32, h as u32, rgb)
+            .ok_or_else(|| PlatformError::UnsupportedControl("invalid capture buffer".into()))?;
+        let resized = if w > 1024 {
+            let new_h = ((h as f32) * (1024.0 / w as f32)).round() as u32;
+            image::imageops::resize(&img, 1024, new_h, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+
+        let mut jpeg_bytes = Vec::new();
+        let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 65);
+        encoder
+            .encode_image(&resized)
+            .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+
+        Ok(base64::engine::general_purpose::STANDARD.encode(jpeg_bytes))
+    }
+
     pub fn list_windows() -> Vec<Scope> {
-        let mut scopes: Vec<Scope> = Vec::new();
+        let mut scopes: Vec<Scope> = vec![Scope {
+            scope_id: "desktop:all".into(),
+            target_kind: TargetKind::Window,
+            app_name: "Desktop".into(),
+            window_title: "All visible windows (Full access)".into(),
+            process_id: None,
+        }];
         let lparam = LPARAM((&mut scopes as *mut Vec<Scope>) as isize);
         let _ = unsafe { EnumWindows(Some(enum_window_proc), lparam) };
         scopes
+    }
+
+    fn resolve_target_hwnd(scope_id: &str) -> Result<HWND, PlatformError> {
+        if scope_id == "desktop:all" {
+            let fg = unsafe { GetForegroundWindow() };
+            let mut buf = [0u16; 128];
+            let len = unsafe { GetWindowTextW(fg, &mut buf) };
+            let fg_title = if len > 0 {
+                String::from_utf16_lossy(&buf[..len as usize])
+            } else {
+                String::new()
+            };
+            if !fg.0.is_null() && fg_title != "Snippy" && fg_title != "Snippy Overlay" {
+                return Ok(fg);
+            }
+            for w in list_windows() {
+                if w.scope_id.starts_with("hwnd:") {
+                    return parse_hwnd(&w.scope_id);
+                }
+            }
+            return Err(PlatformError::TargetNotFound(
+                "no visible target window found on desktop".into(),
+            ));
+        }
+        parse_hwnd(scope_id)
     }
 
     fn parse_hwnd(scope_id: &str) -> Result<HWND, PlatformError> {
@@ -159,7 +315,7 @@ mod win_impl {
         depth: usize,
         out: &mut Vec<SemanticElement>,
     ) {
-        if depth > 5 || out.len() >= 80 {
+        if depth > 18 || out.len() >= 100 {
             return;
         }
         let name = unsafe { el.CurrentName() }
@@ -174,13 +330,17 @@ mod win_impl {
         let control_type = unsafe { el.CurrentControlType() }.map(|c| c.0).unwrap_or(0);
         let rect = unsafe { el.CurrentBoundingRectangle() }.ok();
 
-        if !name.is_empty() || is_secret {
+        // Include named elements, secret fields, or editable/document controls (Edit=50004, Document=50030)
+        let is_editable = control_type == 50004 || control_type == 50030;
+        if !name.is_empty() || is_secret || is_editable {
             let idx = out.len();
             out.push(SemanticElement {
                 locator: element_locator(el, idx),
                 role: format!("uia:{control_type}"),
                 label: if is_secret {
                     "Sensitive field".into()
+                } else if name.is_empty() {
+                    "Editable area".into()
                 } else {
                     name
                 },
@@ -198,7 +358,7 @@ mod win_impl {
         if let Ok(mut child) = unsafe { walker.GetFirstChildElement(el) } {
             loop {
                 collect_elements(walker, &child, depth + 1, out);
-                if out.len() >= 80 {
+                if out.len() >= 100 {
                     break;
                 }
                 match unsafe { walker.GetNextSiblingElement(&child) } {
@@ -216,7 +376,7 @@ mod win_impl {
         depth: usize,
         counter: &mut usize,
     ) -> Option<IUIAutomationElement> {
-        if depth > 5 || *counter >= 80 {
+        if depth > 18 || *counter >= 100 {
             return None;
         }
         let name = unsafe { el.CurrentName() }
@@ -225,7 +385,9 @@ mod win_impl {
         let is_secret = unsafe { el.CurrentIsPassword() }
             .map(|b| b.as_bool())
             .unwrap_or(false);
-        if !name.is_empty() || is_secret {
+        let control_type = unsafe { el.CurrentControlType() }.map(|c| c.0).unwrap_or(0);
+        let is_editable = control_type == 50004 || control_type == 50030;
+        if !name.is_empty() || is_secret || is_editable {
             let loc = element_locator(el, *counter);
             *counter += 1;
             if loc == target_locator {
@@ -249,16 +411,74 @@ mod win_impl {
     }
 
     pub fn observe_hwnd(scope: &Scope) -> Result<Vec<SemanticElement>, PlatformError> {
-        let hwnd = parse_hwnd(&scope.scope_id)?;
+        let hwnd = resolve_target_hwnd(&scope.scope_id)?;
         if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
             return Err(PlatformError::TargetNotFound(format!(
                 "window {} is no longer visible",
                 scope.window_title
             )));
         }
+        if unsafe { IsIconic(hwnd) }.as_bool() {
+            let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
         let uia = init_uia()?;
         let root = unsafe { uia.ElementFromHandle(hwnd) }
             .map_err(|e| PlatformError::TargetNotFound(e.to_string()))?;
+
+        // Use FindAll(TreeScope_Descendants) first so UWP/ApplicationFrameWindow children (e.g. Settings) are included
+        if let Ok(cond) = unsafe { uia.CreateTrueCondition() } {
+            if let Ok(arr) = unsafe { root.FindAll(TreeScope_Descendants, &cond) } {
+                let len = unsafe { arr.Length() }.unwrap_or(0).min(160);
+                let mut elements = Vec::new();
+                for i in 0..len {
+                    let Ok(el) = (unsafe { arr.GetElement(i) }) else {
+                        continue;
+                    };
+                    let name = unsafe { el.CurrentName() }
+                        .map(|b| b.to_string())
+                        .unwrap_or_default();
+                    let is_enabled = unsafe { el.CurrentIsEnabled() }
+                        .map(|b| b.as_bool())
+                        .unwrap_or(false);
+                    let is_secret = unsafe { el.CurrentIsPassword() }
+                        .map(|b| b.as_bool())
+                        .unwrap_or(false);
+                    let control_type = unsafe { el.CurrentControlType() }.map(|c| c.0).unwrap_or(0);
+                    let rect = unsafe { el.CurrentBoundingRectangle() }.ok();
+                    let is_editable = control_type == 50004 || control_type == 50030;
+                    if !name.is_empty() || is_secret || is_editable {
+                        let idx = elements.len();
+                        elements.push(SemanticElement {
+                            locator: element_locator(&el, idx),
+                            role: format!("uia:{control_type}"),
+                            label: if is_secret {
+                                "Sensitive field".into()
+                            } else if name.is_empty() {
+                                "Editable area".into()
+                            } else {
+                                name
+                            },
+                            bounds: rect.map(|r| Bounds {
+                                x: r.left,
+                                y: r.top,
+                                width: (r.right - r.left).max(0) as u32,
+                                height: (r.bottom - r.top).max(0) as u32,
+                            }),
+                            is_secret,
+                            is_enabled,
+                        });
+                    }
+                    if elements.len() >= 120 {
+                        break;
+                    }
+                }
+                if !elements.is_empty() {
+                    return Ok(elements);
+                }
+            }
+        }
+
         let walker = unsafe { uia.ControlViewWalker() }
             .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
         let mut elements = Vec::new();
@@ -266,13 +486,213 @@ mod win_impl {
         Ok(elements)
     }
 
-    pub fn execute_uia(action: &ApprovedAction) -> Result<String, PlatformError> {
-        let hwnd = parse_hwnd(&action.scope_id)?;
+    fn ensure_foreground(hwnd: HWND) -> Result<(), PlatformError> {
         if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
             return Err(PlatformError::FocusChanged(
                 "target window is no longer visible".into(),
             ));
         }
+        if unsafe { IsIconic(hwnd) }.as_bool() {
+            let _ = unsafe { ShowWindow(hwnd, SW_RESTORE) };
+        }
+        let _ = unsafe { BringWindowToTop(hwnd) };
+        let _ = unsafe { SetForegroundWindow(hwnd) };
+        for _ in 0..6 {
+            if unsafe { GetForegroundWindow() } == hwnd {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        Err(PlatformError::FocusChanged(
+            "target window did not retain foreground focus (is it running as Administrator?)".into(),
+        ))
+    }
+
+    fn send_key(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
+        let mut flags = Default::default();
+        if key_up {
+            flags = KEYEVENTF_KEYUP;
+        }
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    fn send_key_press(key_spec: &str) -> Result<(), PlatformError> {
+        let lower = key_spec.trim().to_lowercase();
+        let inputs: Vec<INPUT> = match lower.as_str() {
+            "enter" | "return" => vec![send_key(VK_RETURN, false), send_key(VK_RETURN, true)],
+            "tab" => vec![send_key(VK_TAB, false), send_key(VK_TAB, true)],
+            "escape" | "esc" => vec![send_key(VK_ESCAPE, false), send_key(VK_ESCAPE, true)],
+            "backspace" => vec![send_key(VK_BACK, false), send_key(VK_BACK, true)],
+            "ctrl+a" | "ctrl+c" | "ctrl+v" | "ctrl+s" => {
+                let ch = lower.as_bytes()[5].to_ascii_uppercase();
+                let vk = VIRTUAL_KEY(ch as u16);
+                vec![
+                    send_key(VK_CONTROL, false),
+                    send_key(vk, false),
+                    send_key(vk, true),
+                    send_key(VK_CONTROL, true),
+                ]
+            }
+            _ => {
+                return Err(PlatformError::UnsupportedControl(format!(
+                    "unsupported key_press: {key_spec}"
+                )));
+            }
+        };
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize != inputs.len() {
+            return Err(PlatformError::UnsupportedControl(
+                "SendInput failed to send all key events".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn send_scroll(delta_y: i32) -> Result<(), PlatformError> {
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: delta_y as u32,
+                    dwFlags: MOUSEEVENTF_WHEEL,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
+        if sent != 1 {
+            return Err(PlatformError::UnsupportedControl(
+                "SendInput scroll failed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn send_pointer_click(x: i32, y: i32) -> Result<(), PlatformError> {
+        let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1);
+        let sh = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1);
+        let norm_x = ((x as i64 * 65535) / sw as i64).clamp(0, 65535) as i32;
+        let norm_y = ((y as i64 * 65535) / sh as i64).clamp(0, 65535) as i32;
+        let inputs = [
+            INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: norm_x,
+                        dy: norm_y,
+                        mouseData: 0,
+                        dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: norm_x,
+                        dy: norm_y,
+                        mouseData: 0,
+                        dwFlags: MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+            INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: norm_x,
+                        dy: norm_y,
+                        mouseData: 0,
+                        dwFlags: MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            },
+        ];
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize != inputs.len() {
+            return Err(PlatformError::UnsupportedControl(
+                "SendInput pointer click failed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn execute_uia(action: &ApprovedAction) -> Result<String, PlatformError> {
+        if action.kind == ActionKind::Wait {
+            let ms = action
+                .arguments
+                .get("ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(500)
+                .min(2000);
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            return Ok(format!("Waited {ms}ms"));
+        }
+
+        let hwnd = resolve_target_hwnd(&action.scope_id)?;
+        ensure_foreground(hwnd)?;
+
+        match action.kind {
+            ActionKind::KeyPress => {
+                let key = action
+                    .arguments
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        PlatformError::UnsupportedControl("missing arguments.key".into())
+                    })?;
+                send_key_press(key)?;
+                return Ok(format!("Pressed {key}"));
+            }
+            ActionKind::Scroll => {
+                let delta = action
+                    .arguments
+                    .get("delta_y")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(-240) as i32;
+                send_scroll(delta)?;
+                return Ok(format!("Scrolled by {delta}"));
+            }
+            ActionKind::Pointer => {
+                let hint = action.target.coordinate_hint.ok_or_else(|| {
+                    PlatformError::StaleLocator("coordinate_hint required for pointer".into())
+                })?;
+                send_pointer_click(hint.x, hint.y)?;
+                return Ok(format!("Clicked at ({}, {})", hint.x, hint.y));
+            }
+            ActionKind::Wait => {
+                let ms = action
+                    .arguments
+                    .get("ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(500)
+                    .min(2000);
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                return Ok(format!("Waited {ms}ms"));
+            }
+            _ => {}
+        }
+
         let locator = action
             .target
             .semantic_locator
@@ -282,11 +702,93 @@ mod win_impl {
         let uia = init_uia()?;
         let root = unsafe { uia.ElementFromHandle(hwnd) }
             .map_err(|e| PlatformError::TargetNotFound(e.to_string()))?;
-        let walker = unsafe { uia.ControlViewWalker() }
-            .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
-        let mut counter = 0usize;
-        let el = find_element_by_locator(&walker, &root, locator, 0, &mut counter)
-            .ok_or_else(|| PlatformError::StaleLocator(format!("locator not found: {locator}")))?;
+        let mut maybe_el = None;
+        if let Ok(cond) = unsafe { uia.CreateTrueCondition() } {
+            if let Ok(arr) = unsafe { root.FindAll(TreeScope_Descendants, &cond) } {
+                let len = unsafe { arr.Length() }.unwrap_or(0).min(160);
+                let mut idx = 0usize;
+                for i in 0..len {
+                    let Ok(el) = (unsafe { arr.GetElement(i) }) else {
+                        continue;
+                    };
+                    let name = unsafe { el.CurrentName() }
+                        .map(|b| b.to_string())
+                        .unwrap_or_default();
+                    let is_secret = unsafe { el.CurrentIsPassword() }
+                        .map(|b| b.as_bool())
+                        .unwrap_or(false);
+                    let control_type = unsafe { el.CurrentControlType() }.map(|c| c.0).unwrap_or(0);
+                    let is_editable = control_type == 50004 || control_type == 50030;
+                    if !name.is_empty() || is_secret || is_editable {
+                        if element_locator(&el, idx) == locator {
+                            maybe_el = Some(el);
+                            break;
+                        }
+                        idx += 1;
+                    }
+                }
+            }
+        }
+        if maybe_el.is_none() {
+            let walker = unsafe { uia.ControlViewWalker() }
+                .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
+            let mut counter = 0usize;
+            maybe_el = find_element_by_locator(&walker, &root, locator, 0, &mut counter);
+        }
+        let Some(el) = maybe_el else {
+            // Fallback: if UIA index shifted after focus change and coordinate_hint is available, use it safely
+            if let Some(hint) = action.target.coordinate_hint {
+                match action.kind {
+                    ActionKind::Focus | ActionKind::Invoke | ActionKind::Pointer => {
+                        send_pointer_click(hint.x, hint.y)?;
+                        return Ok(format!("Clicked fallback coordinates ({}, {})", hint.x, hint.y));
+                    }
+                    ActionKind::SetNonSecretValue => {
+                        send_pointer_click(hint.x, hint.y)?;
+                        let text = action
+                            .arguments
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                PlatformError::UnsupportedControl("missing arguments.text".into())
+                            })?;
+                        let mut inputs = Vec::with_capacity(text.encode_utf16().count() * 2);
+                        for code_unit in text.encode_utf16() {
+                            inputs.push(INPUT {
+                                r#type: INPUT_KEYBOARD,
+                                Anonymous: INPUT_0 {
+                                    ki: KEYBDINPUT {
+                                        wVk: VIRTUAL_KEY(0),
+                                        wScan: code_unit,
+                                        dwFlags: KEYEVENTF_UNICODE,
+                                        time: 0,
+                                        dwExtraInfo: 0,
+                                    },
+                                },
+                            });
+                            inputs.push(INPUT {
+                                r#type: INPUT_KEYBOARD,
+                                Anonymous: INPUT_0 {
+                                    ki: KEYBDINPUT {
+                                        wVk: VIRTUAL_KEY(0),
+                                        wScan: code_unit,
+                                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                                        time: 0,
+                                        dwExtraInfo: 0,
+                                    },
+                                },
+                            });
+                        }
+                        let _ = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+                        return Ok(format!("Typed text at ({}, {})", hint.x, hint.y));
+                    }
+                    _ => {}
+                }
+            }
+            return Err(PlatformError::StaleLocator(format!(
+                "locator not found: {locator}"
+            )));
+        };
 
         let is_secret = unsafe { el.CurrentIsPassword() }
             .map(|b| b.as_bool())
@@ -321,15 +823,51 @@ mod win_impl {
                     .ok_or_else(|| {
                         PlatformError::UnsupportedControl("missing arguments.text".into())
                     })?;
-                let pattern: IUIAutomationValuePattern = unsafe {
+                if let Ok(pattern) = unsafe {
                     el.GetCurrentPattern(UIA_ValuePatternId)
-                        .and_then(|u| u.cast())
+                        .and_then(|u| u.cast::<IUIAutomationValuePattern>())
+                } {
+                    let bstr = BSTR::from(text);
+                    if unsafe { pattern.SetValue(&bstr) }.is_ok() {
+                        return Ok(format!("Updated non-secret value on {locator}"));
+                    }
                 }
-                .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
-                let bstr = BSTR::from(text);
-                unsafe { pattern.SetValue(&bstr) }
-                    .map_err(|e| PlatformError::UnsupportedControl(e.to_string()))?;
-                Ok(format!("Updated non-secret value on {locator}"))
+                // Fallback for RichEdit / Document controls that don't expose ValuePattern: focus + Unicode SendInput
+                let _ = unsafe { el.SetFocus() };
+                let mut inputs = Vec::with_capacity(text.encode_utf16().count() * 2);
+                for code_unit in text.encode_utf16() {
+                    inputs.push(INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VIRTUAL_KEY(0),
+                                wScan: code_unit,
+                                dwFlags: KEYEVENTF_UNICODE,
+                                time: 0,
+                                dwExtraInfo: 0,
+                            },
+                        },
+                    });
+                    inputs.push(INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: VIRTUAL_KEY(0),
+                                wScan: code_unit,
+                                dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                                time: 0,
+                                dwExtraInfo: 0,
+                            },
+                        },
+                    });
+                }
+                let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+                if sent as usize != inputs.len() {
+                    return Err(PlatformError::UnsupportedControl(
+                        "failed to type text into target control".into(),
+                    ));
+                }
+                Ok(format!("Typed non-secret text into {locator}"))
             }
             other => Err(PlatformError::UnsupportedControl(format!(
                 "{other:?} not yet implemented in Phase 3"
@@ -346,6 +884,18 @@ pub fn list_visible_windows() -> Vec<Scope> {
     #[cfg(not(windows))]
     {
         Vec::new()
+    }
+}
+
+pub fn capture_scope_jpeg_base64(scope_id: &str) -> Result<String, PlatformError> {
+    #[cfg(windows)]
+    {
+        win_impl::capture_screen_jpeg(scope_id)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = scope_id;
+        Err(PlatformError::UnsupportedControl("windows only".into()))
     }
 }
 
@@ -407,11 +957,12 @@ impl PlatformAdapter for WindowsPlatformAdapter {
 
     async fn observe_target(&self, scope: &Scope) -> Result<Observation, PlatformError> {
         #[cfg(windows)]
-        let semantic_elements = if scope.scope_id.starts_with("hwnd:") {
-            win_impl::observe_hwnd(scope)?
-        } else {
-            Vec::new()
-        };
+        let semantic_elements =
+            if scope.scope_id.starts_with("hwnd:") || scope.scope_id == "desktop:all" {
+                win_impl::observe_hwnd(scope)?
+            } else {
+                Vec::new()
+            };
         #[cfg(not(windows))]
         let semantic_elements = Vec::new();
 

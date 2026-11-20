@@ -11,6 +11,7 @@ use session_store::{SessionStatus, SessionStore, TimelineStep};
 use crate::policy::{PolicyDecision, PolicyEngine};
 use crate::provider::{
     validate_proposal, AgentInput, ProposalStatus, ProviderAdapter, ProviderError,
+    ScreenAnnotation,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,10 +20,14 @@ pub enum StepOutcome {
     Executed {
         verification: Verification,
         summary: String,
+        #[serde(default)]
+        annotations: Vec<ScreenAnnotation>,
     },
     AwaitingApproval {
         action: Box<ApprovedAction>,
         consequence: String,
+        #[serde(default)]
+        annotations: Vec<ScreenAnnotation>,
     },
     AwaitingSecret {
         reason: String,
@@ -32,6 +37,8 @@ pub enum StepOutcome {
     },
     Complete {
         summary: String,
+        #[serde(default)]
+        annotations: Vec<ScreenAnnotation>,
     },
     Stopped,
 }
@@ -147,6 +154,7 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
                     .map_err(|e| e.to_string())?;
                 return Ok(StepOutcome::Complete {
                     summary: proposal.user_message,
+                    annotations: proposal.annotations,
                 });
             }
             ProposalStatus::Blocked => {
@@ -188,8 +196,13 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
                     &session.scope,
                     calculated_risk,
                 );
-                self.execute_and_verify(session_id, approved, "allow".into())
-                    .await
+                self.execute_and_verify(
+                    session_id,
+                    approved,
+                    "allow".into(),
+                    proposal.annotations,
+                )
+                .await
             }
             PolicyDecision::RequireApproval {
                 calculated_risk,
@@ -207,6 +220,7 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
                 Ok(StepOutcome::AwaitingApproval {
                     action: Box::new(approved),
                     consequence,
+                    annotations: proposal.annotations,
                 })
             }
             PolicyDecision::RequireTakeover { reason } => {
@@ -241,7 +255,7 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
                 reason: "approval expired or cancelled".into(),
             });
         }
-        self.execute_and_verify(session_id, approved, "user_approved".into())
+        self.execute_and_verify(session_id, approved, "user_approved".into(), Vec::new())
             .await
     }
 
@@ -250,6 +264,7 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
         session_id: &str,
         approved: ApprovedAction,
         policy_decision: String,
+        annotations: Vec<ScreenAnnotation>,
     ) -> Result<StepOutcome, String> {
         self.store
             .update_status(session_id, SessionStatus::Acting)
@@ -310,6 +325,7 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
             Verification::Confirmed { .. } => Ok(StepOutcome::Executed {
                 verification,
                 summary: result.summary,
+                annotations,
             }),
             Verification::NotConfirmed { reason }
             | Verification::Ambiguous { reason }
