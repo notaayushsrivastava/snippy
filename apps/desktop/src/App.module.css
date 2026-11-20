@@ -10,6 +10,11 @@
   background: var(--surface-canvas);
 }
 
+.shellDocked {
+  padding: 8px;
+  align-items: center;
+}
+
 .bar {
   width: 100%;
   max-width: 760px;

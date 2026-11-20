@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for Snippy main and overlay windows","local":true,"windows":["main","overlay"],"permissions":["core:default","core:window:allow-start-dragging"]}}
+{"default":{"identifier":"default","description":"Default capabilities for Snippy main, overlay, and approval windows","local":true,"windows":["main","overlay","approval"],"permissions":["core:default","core:window:allow-start-dragging","updater:default"]}}

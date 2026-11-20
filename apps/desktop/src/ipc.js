@@ -163,3 +163,19 @@ export async function hideOverlayHighlight() {
     if (tauri)
         return tauri.invoke('hide_overlay_highlight');
 }
+export async function setWorkingDock(working) {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('set_working_dock', { working });
+}
+export async function checkForUpdate() {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('check_for_update');
+    return null;
+}
+export async function installUpdate() {
+    const tauri = getTauri();
+    if (tauri)
+        return tauri.invoke('install_update');
+}

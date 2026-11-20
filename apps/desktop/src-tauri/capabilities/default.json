@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for Snippy main and overlay windows",
-  "windows": ["main", "overlay"],
+  "description": "Default capabilities for Snippy main, overlay, and approval windows",
+  "windows": ["main", "overlay", "approval"],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "updater:default"
   ]
 }

@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useRef, useState } from 'react';
 import { ActionCard, ApprovalCard, ScopeChip, SecretHandoff, StopControl, TimelineItem, } from '@snippy/ui';
-import { approveAction, continueSession, deleteProviderKey, deleteSession, getDefaultProvider, hasProviderKey, hideOverlayHighlight, listSessions, listWindows, rejectAction, setProviderKey, startAndStep, stepSession, stopTask, } from './ipc.js';
+import { approveAction, checkForUpdate, continueSession, deleteProviderKey, deleteSession, getDefaultProvider, hasProviderKey, hideOverlayHighlight, installUpdate, listSessions, listWindows, rejectAction, setProviderKey, setWorkingDock, startAndStep, stepSession, stopTask, } from './ipc.js';
 import styles from './App.module.css';
 const SUGGESTED_TASKS = [
     { title: 'Summarize what is visible in this window', tag: 'Observe' },
@@ -26,7 +26,17 @@ export function App() {
     const [hasKey, setHasKey] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
+    const [availableUpdate, setAvailableUpdate] = useState(null);
+    const [isUpdating, setIsUpdating] = useState(false);
+    const [updateStatus, setUpdateStatus] = useState(null);
     const stoppedRef = useRef(false);
+    const wasSteppingRef = useRef(false);
+    useEffect(() => {
+        if (wasSteppingRef.current === isStepping)
+            return;
+        wasSteppingRef.current = isStepping;
+        void setWorkingDock(isStepping);
+    }, [isStepping]);
     useEffect(() => {
         void (async () => {
             const [winList, sessList, defProvider] = await Promise.all([
@@ -39,6 +49,20 @@ export function App() {
             setSessions(sessList);
             setProvider(defProvider);
         })();
+        void checkForUpdate()
+            .then((info) => {
+            if (info)
+                setAvailableUpdate(info);
+        })
+            .catch(() => { });
+        const onSync = (e) => {
+            if (e.detail) {
+                applyOutcome(e.detail.session, e.detail.outcome);
+                void refreshSessions();
+            }
+        };
+        window.addEventListener('snippy-session-sync', onSync);
+        return () => window.removeEventListener('snippy-session-sync', onSync);
     }, []);
     useEffect(() => {
         if (provider === 'demo') {
@@ -126,6 +150,7 @@ export function App() {
         if (!activeSession || !pendingApproval)
             return;
         stoppedRef.current = false;
+        setIsStepping(true);
         setErrorMsg(null);
         try {
             const res = await approveAction(activeSession.session_id, pendingApproval.action.action_id, provider);
@@ -134,6 +159,9 @@ export function App() {
         }
         catch (err) {
             setErrorMsg(String(err));
+        }
+        finally {
+            setIsStepping(false);
         }
     };
     const handleReject = async () => {
@@ -146,6 +174,7 @@ export function App() {
     };
     const handleStop = async () => {
         stoppedRef.current = true;
+        setIsStepping(false);
         if (!activeSession)
             return;
         const updated = await stopTask(activeSession.session_id);
@@ -155,6 +184,7 @@ export function App() {
         await refreshSessions();
     };
     const handleReset = () => {
+        setIsStepping(false);
         void hideOverlayHighlight();
         setActiveSession(null);
         setPendingApproval(null);
@@ -197,6 +227,7 @@ export function App() {
         if (!activeSession)
             return;
         stoppedRef.current = false;
+        setIsStepping(true);
         setSecretReason(null);
         setErrorMsg(null);
         try {
@@ -206,6 +237,9 @@ export function App() {
         }
         catch (err) {
             setErrorMsg(String(err));
+        }
+        finally {
+            setIsStepping(false);
         }
     };
     const isRunning = activeSession !== null &&
@@ -249,7 +283,18 @@ export function App() {
             : provider === 'gemini_live'
                 ? 'Gemini 3.8 Live (Video)'
                 : 'Gemini'} · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
-    return (_jsx("div", { className: styles.shell, "data-theme": theme, children: _jsxs("main", { className: styles.bar, "aria-label": "Snippy Command Bar", children: [!activeSession ? (_jsxs(_Fragment, { children: [_jsxs("div", { className: styles.header, "data-tauri-drag-region": true, children: [_jsxs("svg", { width: "26", height: "26", viewBox: "0 0 28 28", fill: "none", stroke: "var(--status-safe)", strokeWidth: "2.2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [_jsx("path", { d: "M4 10V6a2 2 0 0 1 2-2h4M18 4h4a2 2 0 0 1 2 2v4M24 18v4a2 2 0 0 1-2 2h-4M10 24H6a2 2 0 0 1-2-2v-4" }), _jsx("circle", { cx: "14", cy: "14", r: "3", fill: "var(--status-safe)", stroke: "none" })] }), _jsx("input", { type: "text", className: styles.taskInput, value: task, onChange: (e) => setTask(e.target.value), onKeyDown: (e) => {
+    return (_jsx("div", { className: `${styles.shell} ${isStepping ? styles.shellDocked : ''}`, "data-theme": theme, children: _jsxs("main", { className: styles.bar, "aria-label": "Snippy Command Bar", children: [isStepping ? (_jsxs("div", { className: styles.header, "data-tauri-drag-region": true, style: { justifyContent: 'space-between', height: '76px', borderBottom: 0 }, children: [_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }, children: [_jsxs("div", { className: styles.pulseWrap, "aria-hidden": "true", children: [_jsx("span", { className: styles.pulseRing }), _jsx("span", { style: {
+                                                width: '9px',
+                                                height: '9px',
+                                                borderRadius: '50%',
+                                                background: 'var(--status-safe)',
+                                            } })] }), _jsxs("div", { style: { minWidth: 0 }, children: [_jsx("div", { style: { fontSize: '13.5px', fontWeight: 600 }, children: "Snippy is working\u2026" }), _jsx("div", { style: {
+                                                fontSize: '12px',
+                                                color: 'var(--content-muted)',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }, children: selectedScope?.app_name ?? activeSession?.scope.app_name ?? 'Active window' })] })] }), _jsx(StopControl, { onStop: () => void handleStop() })] })) : !activeSession ? (_jsxs(_Fragment, { children: [_jsxs("div", { className: styles.header, "data-tauri-drag-region": true, children: [_jsxs("svg", { width: "26", height: "26", viewBox: "0 0 28 28", fill: "none", stroke: "var(--status-safe)", strokeWidth: "2.2", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true", children: [_jsx("path", { d: "M4 10V6a2 2 0 0 1 2-2h4M18 4h4a2 2 0 0 1 2 2v4M24 18v4a2 2 0 0 1-2 2h-4M10 24H6a2 2 0 0 1-2-2v-4" }), _jsx("circle", { cx: "14", cy: "14", r: "3", fill: "var(--status-safe)", stroke: "none" })] }), _jsx("input", { type: "text", className: styles.taskInput, value: task, onChange: (e) => setTask(e.target.value), onKeyDown: (e) => {
                                         if (e.key === 'Enter')
                                             void handleStart();
                                     }, placeholder: "Tell Snippy what to do on your screen", "aria-label": "Task for Snippy" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => setShowSettings((s) => !s), "aria-expanded": showSettings, children: "Settings" }), _jsx("button", { type: "button", className: styles.iconBtn, disabled: isStepping, style: {
@@ -288,7 +333,37 @@ export function App() {
                                         : secretReason
                                             ? 'var(--status-secret)'
                                             : 'var(--status-safe)',
-                                } }) })] })), errorMsg ? (_jsx("div", { className: styles.bodyPad, children: _jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '13px' }, children: errorMsg }) })) : null, showSettings ? (_jsxs("section", { className: styles.bodyPad, "aria-label": "Settings and History", children: [_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '13px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), className: styles.iconBtn, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "gemini_live", children: "Gemini 3.8 Live (Video Stream)" }), _jsx("option", { value: "gemini", children: "Gemini 3.5 Flash-Lite" }), _jsx("option", { value: "openai", children: "OpenAI" })] }), _jsxs("button", { type: "button", className: styles.iconBtn, onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), children: ["Theme: ", theme] })] }), provider !== 'demo' ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' }, children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", className: styles.iconBtn, style: { flex: 1, textAlign: 'left', cursor: 'text' } }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
+                                } }) })] })), availableUpdate ? (_jsxs("div", { className: styles.bodyPad, style: {
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: 'rgba(61, 219, 176, 0.08)',
+                        borderBottom: '1px solid var(--border-subtle)',
+                    }, children: [_jsxs("span", { style: { fontSize: '13px' }, children: ["Update available: ", _jsxs("strong", { children: ["v", availableUpdate.version] })] }), _jsx("button", { type: "button", className: styles.iconBtn, disabled: isUpdating, style: {
+                                background: 'var(--action-primary)',
+                                color: '#0b1020',
+                                borderColor: 'transparent',
+                                fontWeight: 600,
+                            }, onClick: () => {
+                                setIsUpdating(true);
+                                void installUpdate().catch((err) => {
+                                    setErrorMsg(String(err));
+                                    setIsUpdating(false);
+                                });
+                            }, children: isUpdating ? 'Installing…' : 'Install & Restart' })] })) : null, errorMsg ? (_jsx("div", { className: styles.bodyPad, children: _jsx("p", { role: "alert", style: { color: 'var(--status-danger)', margin: 0, fontSize: '13px' }, children: errorMsg }) })) : null, showSettings ? (_jsxs("section", { className: styles.bodyPad, "aria-label": "Settings and History", children: [_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }, children: [_jsx("label", { htmlFor: "provider-select", style: { fontSize: '13px', color: 'var(--content-secondary)' }, children: "Provider" }), _jsxs("select", { id: "provider-select", value: provider, onChange: (e) => setProvider(e.target.value), className: styles.iconBtn, children: [_jsx("option", { value: "demo", children: "Demo (Local Mock)" }), _jsx("option", { value: "gemini_live", children: "Gemini 3.8 Live (Video Stream)" }), _jsx("option", { value: "gemini", children: "Gemini 3.5 Flash-Lite" }), _jsx("option", { value: "openai", children: "OpenAI" })] }), _jsxs("button", { type: "button", className: styles.iconBtn, onClick: () => setTheme(theme === 'dark' ? 'light' : 'dark'), children: ["Theme: ", theme] }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
+                                        setUpdateStatus('Checking…');
+                                        void checkForUpdate()
+                                            .then((info) => {
+                                            if (info) {
+                                                setAvailableUpdate(info);
+                                                setUpdateStatus(`Update v${info.version} ready`);
+                                            }
+                                            else {
+                                                setUpdateStatus('Up to date');
+                                            }
+                                        })
+                                            .catch((err) => setUpdateStatus(String(err)));
+                                    }, children: "Check for updates" }), updateStatus ? (_jsx("span", { style: { fontSize: '12px', color: 'var(--content-muted)' }, children: updateStatus })) : null] }), provider !== 'demo' ? (_jsxs("div", { style: { display: 'flex', gap: '8px', alignItems: 'center' }, children: [_jsx("input", { type: "password", value: apiKeyInput, onChange: (e) => setApiKeyInput(e.target.value), placeholder: hasKey ? 'Key saved (enter to replace)' : `Enter ${provider} API key`, "aria-label": "Provider API key", className: styles.iconBtn, style: { flex: 1, textAlign: 'left', cursor: 'text' } }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
                                         if (!apiKeyInput.trim())
                                             return;
                                         void setProviderKey(provider, apiKeyInput).then(() => {
@@ -298,7 +373,7 @@ export function App() {
                                     }, children: "Save Key" }), hasKey ? (_jsx("button", { type: "button", className: styles.iconBtn, onClick: () => void deleteProviderKey(provider).then(() => setHasKey(false)), children: "Clear" })) : null] })) : null, _jsxs("div", { children: [_jsx("div", { className: styles.sectionLabel, style: { padding: '4px 0 6px' }, children: "Recent local sessions" }), sessions.length === 0 ? (_jsx("p", { style: { margin: 0, fontSize: '12.5px', color: 'var(--content-muted)' }, children: "No saved sessions yet." })) : (_jsx("ul", { style: { listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '6px' }, children: sessions.slice(0, 5).map((s) => (_jsxs("li", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }, children: [_jsxs("button", { type: "button", className: styles.iconBtn, style: { flex: 1, textAlign: 'left' }, onClick: () => {
                                                     setActiveSession(s);
                                                     setShowSettings(false);
-                                                }, children: [s.task, " (", s.status, ")"] }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => void handleDeleteSession(s.session_id), "aria-label": `Delete session ${s.task}`, children: "Delete" })] }, s.session_id))) }))] })] })) : null, !activeSession && !showSettings ? (_jsxs("div", { children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: '20px' }, children: [_jsx("div", { className: styles.sectionLabel, children: "Point me at a window" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
+                                                }, children: [s.task, " (", s.status, ")"] }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => void handleDeleteSession(s.session_id), "aria-label": `Delete session ${s.task}`, children: "Delete" })] }, s.session_id))) }))] })] })) : null, !isStepping && !activeSession && !showSettings ? (_jsxs("div", { children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: '20px' }, children: [_jsx("div", { className: styles.sectionLabel, children: "Point me at a window" }), _jsx("button", { type: "button", className: styles.iconBtn, onClick: () => {
                                         void listWindows().then((list) => {
                                             setWindows(list);
                                             if (!selectedScope && list[0])
@@ -310,7 +385,7 @@ export function App() {
                         }), _jsx("div", { className: styles.sectionLabel, children: "Suggested for this window" }), SUGGESTED_TASKS.map((item) => (_jsxs("button", { type: "button", className: styles.suggestRow, onClick: () => {
                                 setTask(item.title);
                                 void handleStart(item.title);
-                            }, children: [_jsx("span", { style: { flex: 1, fontSize: '14px', fontWeight: 500 }, children: item.title }), _jsx("span", { className: styles.kbd, children: item.tag })] }, item.title)))] })) : null, activeSession ? (_jsxs("div", { className: styles.bodyPad, children: [messages.length > 0 ? (_jsx("div", { "aria-label": "Conversation", style: {
+                            }, children: [_jsx("span", { style: { flex: 1, fontSize: '14px', fontWeight: 500 }, children: item.title }), _jsx("span", { className: styles.kbd, children: item.tag })] }, item.title)))] })) : null, !isStepping && activeSession ? (_jsxs("div", { className: styles.bodyPad, children: [messages.length > 0 ? (_jsx("div", { "aria-label": "Conversation", style: {
                                 display: 'flex',
                                 flexDirection: 'column',
                                 gap: '8px',

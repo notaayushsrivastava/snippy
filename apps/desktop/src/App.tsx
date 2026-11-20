@@ -10,21 +10,25 @@ import {
 } from '@snippy/ui';
 import {
   approveAction,
+  checkForUpdate,
   continueSession,
   deleteProviderKey,
   deleteSession,
   getDefaultProvider,
   hasProviderKey,
   hideOverlayHighlight,
+  installUpdate,
   listSessions,
   listWindows,
   rejectAction,
   setProviderKey,
+  setWorkingDock,
   startAndStep,
   stepSession,
   stopTask,
   type ProviderKind,
   type StepResponse,
+  type UpdateInfo,
 } from './ipc.js';
 import styles from './App.module.css';
 
@@ -55,7 +59,17 @@ export function App() {
   const [hasKey, setHasKey] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const stoppedRef = useRef(false);
+  const wasSteppingRef = useRef(false);
+
+  useEffect(() => {
+    if (wasSteppingRef.current === isStepping) return;
+    wasSteppingRef.current = isStepping;
+    void setWorkingDock(isStepping);
+  }, [isStepping]);
 
   useEffect(() => {
     void (async () => {
@@ -69,6 +83,20 @@ export function App() {
       setSessions(sessList);
       setProvider(defProvider);
     })();
+    void checkForUpdate()
+      .then((info) => {
+        if (info) setAvailableUpdate(info);
+      })
+      .catch(() => {});
+
+    const onSync = (e: CustomEvent<StepResponse>) => {
+      if (e.detail) {
+        applyOutcome(e.detail.session, e.detail.outcome);
+        void refreshSessions();
+      }
+    };
+    window.addEventListener('snippy-session-sync', onSync as EventListener);
+    return () => window.removeEventListener('snippy-session-sync', onSync as EventListener);
   }, []);
 
   useEffect(() => {
@@ -158,6 +186,7 @@ export function App() {
   const handleApprove = async () => {
     if (!activeSession || !pendingApproval) return;
     stoppedRef.current = false;
+    setIsStepping(true);
     setErrorMsg(null);
     try {
       const res = await approveAction(
@@ -169,6 +198,8 @@ export function App() {
       await refreshSessions();
     } catch (err) {
       setErrorMsg(String(err));
+    } finally {
+      setIsStepping(false);
     }
   };
 
@@ -182,6 +213,7 @@ export function App() {
 
   const handleStop = async () => {
     stoppedRef.current = true;
+    setIsStepping(false);
     if (!activeSession) return;
     const updated = await stopTask(activeSession.session_id);
     setActiveSession(updated);
@@ -191,6 +223,7 @@ export function App() {
   };
 
   const handleReset = () => {
+    setIsStepping(false);
     void hideOverlayHighlight();
     setActiveSession(null);
     setPendingApproval(null);
@@ -232,6 +265,7 @@ export function App() {
   const handleResumeAfterTakeover = async () => {
     if (!activeSession) return;
     stoppedRef.current = false;
+    setIsStepping(true);
     setSecretReason(null);
     setErrorMsg(null);
     try {
@@ -240,6 +274,8 @@ export function App() {
       await refreshSessions();
     } catch (err) {
       setErrorMsg(String(err));
+    } finally {
+      setIsStepping(false);
     }
   };
 
@@ -287,9 +323,44 @@ export function App() {
         } · ${hasKey ? 'key stored on this device' : 'no key saved'}`;
 
   return (
-    <div className={styles.shell} data-theme={theme}>
+    <div className={`${styles.shell} ${isStepping ? styles.shellDocked : ''}`} data-theme={theme}>
       <main className={styles.bar} aria-label="Snippy Command Bar">
-        {!activeSession ? (
+        {isStepping ? (
+          <div
+            className={styles.header}
+            data-tauri-drag-region
+            style={{ justifyContent: 'space-between', height: '76px', borderBottom: 0 }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+              <div className={styles.pulseWrap} aria-hidden="true">
+                <span className={styles.pulseRing} />
+                <span
+                  style={{
+                    width: '9px',
+                    height: '9px',
+                    borderRadius: '50%',
+                    background: 'var(--status-safe)',
+                  }}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '13.5px', fontWeight: 600 }}>Snippy is working…</div>
+                <div
+                  style={{
+                    fontSize: '12px',
+                    color: 'var(--content-muted)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {selectedScope?.app_name ?? activeSession?.scope.app_name ?? 'Active window'}
+                </div>
+              </div>
+            </div>
+            <StopControl onStop={() => void handleStop()} />
+          </div>
+        ) : !activeSession ? (
           <>
             <div className={styles.header} data-tauri-drag-region>
               <svg
@@ -438,6 +509,43 @@ export function App() {
           </div>
         )}
 
+        {availableUpdate ? (
+          <div
+            className={styles.bodyPad}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: 'rgba(61, 219, 176, 0.08)',
+              borderBottom: '1px solid var(--border-subtle)',
+            }}
+          >
+            <span style={{ fontSize: '13px' }}>
+              Update available: <strong>v{availableUpdate.version}</strong>
+            </span>
+            <button
+              type="button"
+              className={styles.iconBtn}
+              disabled={isUpdating}
+              style={{
+                background: 'var(--action-primary)',
+                color: '#0b1020',
+                borderColor: 'transparent',
+                fontWeight: 600,
+              }}
+              onClick={() => {
+                setIsUpdating(true);
+                void installUpdate().catch((err) => {
+                  setErrorMsg(String(err));
+                  setIsUpdating(false);
+                });
+              }}
+            >
+              {isUpdating ? 'Installing…' : 'Install & Restart'}
+            </button>
+          </div>
+        ) : null}
+
         {errorMsg ? (
           <div className={styles.bodyPad}>
             <p role="alert" style={{ color: 'var(--status-danger)', margin: 0, fontSize: '13px' }}>
@@ -470,6 +578,28 @@ export function App() {
               >
                 Theme: {theme}
               </button>
+              <button
+                type="button"
+                className={styles.iconBtn}
+                onClick={() => {
+                  setUpdateStatus('Checking…');
+                  void checkForUpdate()
+                    .then((info) => {
+                      if (info) {
+                        setAvailableUpdate(info);
+                        setUpdateStatus(`Update v${info.version} ready`);
+                      } else {
+                        setUpdateStatus('Up to date');
+                      }
+                    })
+                    .catch((err) => setUpdateStatus(String(err)));
+                }}
+              >
+                Check for updates
+              </button>
+              {updateStatus ? (
+                <span style={{ fontSize: '12px', color: 'var(--content-muted)' }}>{updateStatus}</span>
+              ) : null}
             </div>
 
             {provider !== 'demo' ? (
@@ -550,7 +680,7 @@ export function App() {
           </section>
         ) : null}
 
-        {!activeSession && !showSettings ? (
+        {!isStepping && !activeSession && !showSettings ? (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: '20px' }}>
               <div className={styles.sectionLabel}>Point me at a window</div>
@@ -609,7 +739,7 @@ export function App() {
           </div>
         ) : null}
 
-        {activeSession ? (
+        {!isStepping && activeSession ? (
           <div className={styles.bodyPad}>
             {messages.length > 0 ? (
               <div

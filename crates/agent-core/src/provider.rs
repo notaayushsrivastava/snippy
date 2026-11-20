@@ -133,15 +133,22 @@ pub fn validate_proposal(
                     "coordinate_hint out of safe bounds".into(),
                 ));
             }
-            // Reject coordinate-only pointer actions when semantic elements are available in single-window mode
-            if action.kind == ActionKind::Pointer
-                && action.target.semantic_locator.is_none()
-                && !observation.semantic_elements.is_empty()
-                && observation.scope.scope_id != "desktop:all"
-            {
-                return Err(ProviderError::InvalidProposal(
-                    "coordinate-only action rejected when semantic elements are available".into(),
-                ));
+            // Reject coordinate-only pointer actions when a semantic element covers that coordinate
+            if action.kind == ActionKind::Pointer && action.target.semantic_locator.is_none() {
+                let covered_by_semantic = observation.semantic_elements.iter().any(|el| {
+                    el.bounds.is_some_and(|b| {
+                        coord.x >= b.x
+                            && coord.x <= b.x + b.width as i32
+                            && coord.y >= b.y
+                            && coord.y <= b.y + b.height as i32
+                    })
+                });
+                if covered_by_semantic {
+                    return Err(ProviderError::InvalidProposal(
+                        "coordinate-only action rejected when semantic elements are available"
+                            .into(),
+                    ));
+                }
             }
         }
     }

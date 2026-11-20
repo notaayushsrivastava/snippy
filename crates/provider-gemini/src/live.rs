@@ -6,13 +6,13 @@ use agent_core::provider::{
 };
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-use crate::{SYSTEM_PROMPT, format_task_prompt, parse_proposal_json};
+use crate::{format_task_prompt, parse_proposal_json, GeminiProvider, SYSTEM_PROMPT};
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub type FrameCaptureFn = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -45,7 +45,9 @@ impl GeminiLiveProvider {
             );
             let (mut ws, _) = tokio::time::timeout(Duration::from_secs(15), connect_async(&url))
                 .await
-                .map_err(|_| ProviderError::Timeout("Gemini Live WebSocket connect timed out".into()))?
+                .map_err(|_| {
+                    ProviderError::Timeout("Gemini Live WebSocket connect timed out".into())
+                })?
                 .map_err(|e| ProviderError::Unavailable(format!("Live connect error: {e}")))?;
 
             let setup = json!({
@@ -152,6 +154,21 @@ impl GeminiLiveProvider {
     }
 }
 
+fn parse_proposal_from_raw(raw: &str) -> Result<AgentProposal, ProviderError> {
+    let stripped = strip_json_fences(raw);
+    if let Ok(proposal) = parse_proposal_json(stripped) {
+        return Ok(proposal);
+    }
+    if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}')) {
+        if end > start {
+            if let Ok(proposal) = parse_proposal_json(&raw[start..=end]) {
+                return Ok(proposal);
+            }
+        }
+    }
+    parse_proposal_json(stripped)
+}
+
 fn strip_json_fences(raw: &str) -> &str {
     let trimmed = raw.trim();
     if let Some(rest) = trimmed.strip_prefix("```json") {
@@ -169,6 +186,34 @@ impl ProviderAdapter for GeminiLiveProvider {
         let user_prompt = format_task_prompt(&input)?;
         let maybe_frame = (self.capture_frame)(&input.scope.scope_id);
 
+        let live_attempt = self
+            .try_live_turn(&user_prompt, maybe_frame.as_deref())
+            .await;
+
+        match live_attempt {
+            Ok(proposal) => Ok(proposal),
+            Err(ProviderError::InvalidProposal(_)) => {
+                // Fall back to structured JSON multimodal generateContent with the same captured frame
+                let rest = GeminiProvider::new(self.api_key.clone());
+                rest.call_model_with_image(
+                    "gemini-3.5-flash-lite",
+                    &user_prompt,
+                    false,
+                    maybe_frame.as_deref(),
+                )
+                .await
+            }
+            Err(err) => Err(err),
+        }
+    }
+}
+
+impl GeminiLiveProvider {
+    async fn try_live_turn(
+        &self,
+        user_prompt: &str,
+        maybe_frame: Option<&str>,
+    ) -> Result<AgentProposal, ProviderError> {
         let mut guard = self.session.lock().await;
         let ws = self.ensure_connected(&mut guard).await?;
 
@@ -183,7 +228,9 @@ impl ProviderAdapter for GeminiLiveProvider {
             });
             if let Err(e) = ws.send(Message::Text(video_msg.to_string().into())).await {
                 *guard = None;
-                return Err(ProviderError::Unavailable(format!("Live video send error: {e}")));
+                return Err(ProviderError::Unavailable(format!(
+                    "Live video send error: {e}"
+                )));
             }
         }
 
@@ -198,7 +245,9 @@ impl ProviderAdapter for GeminiLiveProvider {
         });
         if let Err(e) = ws.send(Message::Text(text_msg.to_string().into())).await {
             *guard = None;
-            return Err(ProviderError::Unavailable(format!("Live text send error: {e}")));
+            return Err(ProviderError::Unavailable(format!(
+                "Live text send error: {e}"
+            )));
         }
 
         let turn_result = tokio::time::timeout(Duration::from_secs(30), async {
@@ -272,9 +321,12 @@ impl ProviderAdapter for GeminiLiveProvider {
                     }
                     if sc.get("turnComplete").and_then(|b| b.as_bool()) == Some(true) {
                         if !text_collected.trim().is_empty() {
-                            return parse_proposal_json(strip_json_fences(&text_collected));
+                            return parse_proposal_from_raw(&text_collected);
                         }
                         if !transcript_collected.trim().is_empty() {
+                            if let Ok(proposal) = parse_proposal_from_raw(&transcript_collected) {
+                                return Ok(proposal);
+                            }
                             return Ok(AgentProposal {
                                 status: ProposalStatus::Complete,
                                 user_message: transcript_collected.trim().to_string(),

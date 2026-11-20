@@ -10,8 +10,7 @@ use session_store::{SessionStatus, SessionStore, TimelineStep};
 
 use crate::policy::{PolicyDecision, PolicyEngine};
 use crate::provider::{
-    validate_proposal, AgentInput, ProposalStatus, ProviderAdapter, ProviderError,
-    ScreenAnnotation,
+    validate_proposal, AgentInput, ProposalStatus, ProviderAdapter, ProviderError, ScreenAnnotation,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -196,13 +195,8 @@ impl<P: PlatformAdapter, M: ProviderAdapter, S: SessionStore> AgentRunner<P, M, 
                     &session.scope,
                     calculated_risk,
                 );
-                self.execute_and_verify(
-                    session_id,
-                    approved,
-                    "allow".into(),
-                    proposal.annotations,
-                )
-                .await
+                self.execute_and_verify(session_id, approved, "allow".into(), proposal.annotations)
+                    .await
             }
             PolicyDecision::RequireApproval {
                 calculated_risk,

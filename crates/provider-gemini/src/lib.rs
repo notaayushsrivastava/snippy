@@ -53,7 +53,13 @@ Action argument formats:
 - key_press: {"key": "enter | tab | escape | backspace | ctrl+a | ctrl+c | ctrl+v | ctrl+s"}
 - scroll: {"delta_y": -240}
 - pointer: {} (requires coordinate_hint)
-- wait: {"ms": 500}"##;
+- wait: {"ms": 500}
+
+Office Harness (NEVER use coordinates when an Office semantic locator is in semantic_elements):
+- Excel: kind "set_non_secret_value", semantic_locator "office:excel:A1" (or any start cell like "office:excel:B2"), risk "draft", arguments {"rows": [["Col1", "Col2"], ["Val1", 100]]}
+- Word: kind "set_non_secret_value", semantic_locator "office:word:body", risk "draft", arguments {"text": "Paragraph text to insert"}
+- PowerPoint: kind "set_non_secret_value", semantic_locator "office:ppt:slide", risk "draft", arguments {"title": "Slide Title", "body": "Bullet points"}
+- Save Office file: kind "invoke", semantic_locator "office:save", risk "local_change", arguments {}"##;
 
 pub struct GeminiProvider {
     client: reqwest::Client,
@@ -134,7 +140,10 @@ impl ProviderAdapter for GeminiProvider {
 
         for model in models {
             for attempt in 0..2 {
-                match self.call_model(model, &user_prompt, false).await {
+                match self
+                    .call_model_with_image(model, &user_prompt, false, None)
+                    .await
+                {
                     Ok(proposal) => return Ok(proposal),
                     Err(ProviderError::Unavailable(msg))
                         if msg.contains("HTTP 429") || msg.contains("HTTP 503") =>
@@ -152,11 +161,12 @@ impl ProviderAdapter for GeminiProvider {
 }
 
 impl GeminiProvider {
-    async fn call_model(
+    pub(crate) async fn call_model_with_image(
         &self,
         model: &str,
         user_prompt: &str,
         use_thinking: bool,
+        jpeg_b64: Option<&str>,
     ) -> Result<AgentProposal, ProviderError> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -171,9 +181,19 @@ impl GeminiProvider {
             json!({ "responseMimeType": "application/json" })
         };
 
+        let mut parts = vec![json!({ "text": user_prompt })];
+        if let Some(b64) = jpeg_b64 {
+            parts.push(json!({
+                "inlineData": {
+                    "mimeType": "image/jpeg",
+                    "data": b64
+                }
+            }));
+        }
+
         let body = json!({
             "system_instruction": { "parts": [{ "text": SYSTEM_PROMPT }] },
-            "contents": [{ "role": "user", "parts": [{ "text": user_prompt }] }],
+            "contents": [{ "role": "user", "parts": parts }],
             "generationConfig": generation_config
         });
 

@@ -98,19 +98,18 @@ export function Overlay() {
             );
           }
           if (ann.kind === 'arrow' && ann.x2 != null && ann.y2 != null) {
+            const cx = Math.round((ann.x + ann.x2) / 2 - 40);
+            const cy = Math.round((ann.y + ann.y2) / 2 + 20);
             return (
               <g key={idx}>
-                <line
-                  x1={ann.x}
-                  y1={ann.y}
-                  x2={ann.x2}
-                  y2={ann.y2}
+                <path
+                  d={`M ${ann.x} ${ann.y} Q ${cx} ${cy} ${ann.x2} ${ann.y2}`}
+                  fill="none"
                   stroke={stroke}
                   strokeWidth="3"
-                  strokeDasharray="8 6"
                   strokeLinecap="round"
-                  markerEnd="url(#snippy-arrowhead)"
                 />
+                <circle cx={ann.x2} cy={ann.y2} r="5" fill={stroke} />
                 {ann.text ? (
                   <text
                     x={ann.x}

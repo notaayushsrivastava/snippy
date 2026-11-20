@@ -9,6 +9,26 @@
     "beforeBuildCommand": "corepack pnpm --filter @snippy/desktop build",
     "frontendDist": "../dist"
   },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBNjQxM0Q0OTY1NTM0RDEKUldUUk5GV1cxQk5reWo1QkFlcFk5OVk4aDg5T0ptSWZPVXV0bFBEK09RQmZqWS9vL1MrcGZuR2QK",
+      "endpoints": [
+        "https://github.com/notaayushsrivastava/snippy/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "app": {
     "windows": [
       {
@@ -16,8 +36,8 @@
         "title": "Snippy",
         "width": 800,
         "height": 680,
-        "minWidth": 520,
-        "minHeight": 420,
+        "minWidth": 300,
+        "minHeight": 96,
         "decorations": false,
         "transparent": true,
         "center": true,
@@ -34,6 +54,18 @@
         "visible": false,
         "width": 320,
         "height": 100
+      },
+      {
+        "label": "approval",
+        "title": "Snippy Approval",
+        "url": "index.html#approval",
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "width": 482,
+        "height": 320
       }
     ],
     "security": {

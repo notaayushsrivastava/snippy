@@ -38,7 +38,9 @@ export function Overlay() {
                         return (_jsxs("g", { children: [_jsx("circle", { cx: ann.x, cy: ann.y, r: r, fill: "rgba(61, 219, 176, 0.1)", stroke: stroke, strokeWidth: "3" }), ann.text ? (_jsx("text", { x: ann.x, y: ann.y - r - 8, fill: "#F3F4F7", fontSize: "12", fontWeight: "600", fontFamily: "Inter, system-ui, sans-serif", children: ann.text })) : null] }, idx));
                     }
                     if (ann.kind === 'arrow' && ann.x2 != null && ann.y2 != null) {
-                        return (_jsxs("g", { children: [_jsx("line", { x1: ann.x, y1: ann.y, x2: ann.x2, y2: ann.y2, stroke: stroke, strokeWidth: "3", strokeDasharray: "8 6", strokeLinecap: "round", markerEnd: "url(#snippy-arrowhead)" }), ann.text ? (_jsx("text", { x: ann.x, y: ann.y - 8, fill: "#F3F4F7", fontSize: "12", fontWeight: "600", fontFamily: "Inter, system-ui, sans-serif", children: ann.text })) : null] }, idx));
+                        const cx = Math.round((ann.x + ann.x2) / 2 - 40);
+                        const cy = Math.round((ann.y + ann.y2) / 2 + 20);
+                        return (_jsxs("g", { children: [_jsx("path", { d: `M ${ann.x} ${ann.y} Q ${cx} ${cy} ${ann.x2} ${ann.y2}`, fill: "none", stroke: stroke, strokeWidth: "3", strokeLinecap: "round" }), _jsx("circle", { cx: ann.x2, cy: ann.y2, r: "5", fill: stroke }), ann.text ? (_jsx("text", { x: ann.x, y: ann.y - 8, fill: "#F3F4F7", fontSize: "12", fontWeight: "600", fontFamily: "Inter, system-ui, sans-serif", children: ann.text })) : null] }, idx));
                     }
                     if (ann.kind === 'label') {
                         return (_jsxs("g", { transform: `translate(${ann.x}, ${ann.y})`, children: [_jsx("rect", { x: "0", y: "0", width: Math.max(90, (ann.text?.length ?? 6) * 8 + 20), height: "28", rx: "8", fill: "#14151A", stroke: stroke, strokeWidth: "1.5" }), _jsx("text", { x: "10", y: "18", fill: "#F3F4F7", fontSize: "12", fontWeight: "600", fontFamily: "Inter, system-ui, sans-serif", children: ann.text ?? 'Snippy' })] }, idx));

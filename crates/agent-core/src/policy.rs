@@ -63,11 +63,11 @@ impl PolicyEngine {
 
         // Check semantic target if specified
         if let Some(locator) = &action.target.semantic_locator {
-            let Some(element) = observation
-                .semantic_elements
-                .iter()
-                .find(|el| &el.locator == locator)
-            else {
+            let matched = observation.semantic_elements.iter().find(|el| {
+                &el.locator == locator
+                    || (locator.starts_with("office:excel:") && el.locator == "office:excel:range")
+            });
+            let Some(element) = matched else {
                 return PolicyDecision::Deny {
                     reason: format!("stale or missing semantic locator: {locator}"),
                 };

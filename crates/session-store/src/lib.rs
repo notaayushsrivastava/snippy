@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use platform_contract::{RiskCategory, Scope, SecureStorage, Verification};
 use rand::RngCore;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -62,10 +62,15 @@ pub enum StoreError {
 
 #[async_trait]
 pub trait SessionStore: Send + Sync {
-    async fn create_session(&self, task: String, scope: Scope) -> Result<SessionRecord, StoreError>;
+    async fn create_session(&self, task: String, scope: Scope)
+        -> Result<SessionRecord, StoreError>;
     async fn get_session(&self, session_id: &str) -> Result<SessionRecord, StoreError>;
     async fn list_sessions(&self) -> Result<Vec<SessionRecord>, StoreError>;
-    async fn update_status(&self, session_id: &str, status: SessionStatus) -> Result<(), StoreError>;
+    async fn update_status(
+        &self,
+        session_id: &str,
+        status: SessionStatus,
+    ) -> Result<(), StoreError>;
     async fn update_task(&self, session_id: &str, task: String) -> Result<(), StoreError>;
     async fn append_step(&self, session_id: &str, step: TimelineStep) -> Result<(), StoreError>;
     async fn delete_session(&self, session_id: &str) -> Result<(), StoreError>;
@@ -84,7 +89,11 @@ impl InMemorySessionStore {
 
 #[async_trait]
 impl SessionStore for InMemorySessionStore {
-    async fn create_session(&self, task: String, scope: Scope) -> Result<SessionRecord, StoreError> {
+    async fn create_session(
+        &self,
+        task: String,
+        scope: Scope,
+    ) -> Result<SessionRecord, StoreError> {
         let now = Utc::now();
         let record = SessionRecord {
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -115,7 +124,11 @@ impl SessionStore for InMemorySessionStore {
         Ok(items)
     }
 
-    async fn update_status(&self, session_id: &str, status: SessionStatus) -> Result<(), StoreError> {
+    async fn update_status(
+        &self,
+        session_id: &str,
+        status: SessionStatus,
+    ) -> Result<(), StoreError> {
         let mut guard = self.sessions.write().await;
         let session = guard
             .get_mut(session_id)
@@ -254,14 +267,21 @@ impl SqliteSessionStore {
         Ok(())
     }
 
-    fn load_record(&self, conn: &Connection, session_id: &str) -> Result<SessionRecord, StoreError> {
+    fn load_record(
+        &self,
+        conn: &Connection,
+        session_id: &str,
+    ) -> Result<SessionRecord, StoreError> {
         let mut stmt = conn
             .prepare("SELECT nonce, ciphertext FROM sessions WHERE session_id = ?1")
             .map_err(|e| StoreError::Storage(e.to_string()))?;
         let mut rows = stmt
             .query(params![session_id])
             .map_err(|e| StoreError::Storage(e.to_string()))?;
-        let Some(row) = rows.next().map_err(|e| StoreError::Storage(e.to_string()))? else {
+        let Some(row) = rows
+            .next()
+            .map_err(|e| StoreError::Storage(e.to_string()))?
+        else {
             return Err(StoreError::NotFound(session_id.to_string()));
         };
         let nonce: Vec<u8> = row.get(0).map_err(|e| StoreError::Storage(e.to_string()))?;
@@ -272,7 +292,11 @@ impl SqliteSessionStore {
 
 #[async_trait]
 impl SessionStore for SqliteSessionStore {
-    async fn create_session(&self, task: String, scope: Scope) -> Result<SessionRecord, StoreError> {
+    async fn create_session(
+        &self,
+        task: String,
+        scope: Scope,
+    ) -> Result<SessionRecord, StoreError> {
         let now = Utc::now();
         let record = SessionRecord {
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -302,7 +326,10 @@ impl SessionStore for SqliteSessionStore {
             .query([])
             .map_err(|e| StoreError::Storage(e.to_string()))?;
         let mut out = Vec::new();
-        while let Some(row) = rows.next().map_err(|e| StoreError::Storage(e.to_string()))? {
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| StoreError::Storage(e.to_string()))?
+        {
             let nonce: Vec<u8> = row.get(0).map_err(|e| StoreError::Storage(e.to_string()))?;
             let ciphertext: Vec<u8> = row.get(1).map_err(|e| StoreError::Storage(e.to_string()))?;
             out.push(self.decrypt(&nonce, &ciphertext)?);
@@ -310,7 +337,11 @@ impl SessionStore for SqliteSessionStore {
         Ok(out)
     }
 
-    async fn update_status(&self, session_id: &str, status: SessionStatus) -> Result<(), StoreError> {
+    async fn update_status(
+        &self,
+        session_id: &str,
+        status: SessionStatus,
+    ) -> Result<(), StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut record = self.load_record(&conn, session_id)?;
         record.status = status;

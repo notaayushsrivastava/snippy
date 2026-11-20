@@ -207,3 +207,24 @@ export async function hideOverlayHighlight(): Promise<void> {
   const tauri = getTauri();
   if (tauri) return tauri.invoke<void>('hide_overlay_highlight');
 }
+
+export async function setWorkingDock(working: boolean): Promise<void> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<void>('set_working_dock', { working });
+}
+
+export interface UpdateInfo {
+  version: string;
+  body: string | null;
+}
+
+export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<UpdateInfo | null>('check_for_update');
+  return null;
+}
+
+export async function installUpdate(): Promise<void> {
+  const tauri = getTauri();
+  if (tauri) return tauri.invoke<void>('install_update');
+}

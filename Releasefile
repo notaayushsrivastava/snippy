@@ -1,0 +1,7 @@
+version: 0.1.0
+
+## What's Changed
+- Office Harness for Excel, Word, and PowerPoint so Snippy edits documents directly without fragile coordinate clicks.
+- Floating approval modal with on-screen target highlight box and curved pointer arrow.
+- Compact side-docked working indicator while Snippy is executing tasks.
+- Gemini 3.8 Live structured proposal parsing and risk classification fixes.
