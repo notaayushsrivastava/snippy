@@ -1,4 +1,4 @@
-version: 0.1.0
+version: 0.1.1
 build_win: true
 build_mac: false
 
@@ -7,3 +7,5 @@ build_mac: false
 - Floating approval modal with on-screen target highlight box and curved pointer arrow.
 - Compact side-docked working indicator while Snippy is executing tasks.
 - Gemini 3.8 Live structured proposal parsing and risk classification fixes.
+- Integrated CI/CD and auto update system, with website on vercel as well.
+ 
